@@ -1,0 +1,260 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Roles
+//   SUPER_ADMIN — platform owner. No company; manages client companies only.
+//   ADMIN       — company owner/admin. Everything inside their own company.
+//   HR          — staff records, branches, departments, attendance, leave decisions.
+//   ACCOUNTANT  — read-only view of staff and attendance summaries (payroll inputs).
+//   MANAGER     — their own team (direct reports): attendance and leave decisions.
+// ─────────────────────────────────────────────────────────────────────────────
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  HR
+  ACCOUNTANT
+  MANAGER
+}
+
+enum CompanyStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+}
+
+enum Plan {
+  STARTER
+  GROWTH
+  BUSINESS
+}
+
+enum BranchType {
+  OFFICE
+  FIELD
+}
+
+enum WorkType {
+  OFFICE
+  FIELD
+  HYBRID
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  ON_LEAVE
+}
+
+enum AttendanceSource {
+  MANUAL
+  SELF
+}
+
+enum LeaveType {
+  CASUAL
+  SICK
+  PAID
+  UNPAID
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+/// A client business — the tenant. Every other business table carries companyId.
+model Company {
+  id            String        @id @default(cuid())
+  name          String
+  /// Short unique handle shown to staff, e.g. "acme-traders".
+  slug          String        @unique
+  status        CompanyStatus @default(TRIAL)
+  plan          Plan          @default(STARTER)
+  /// Hard cap on active employees. The product targets teams under 100.
+  employeeLimit Int           @default(25)
+  contactName   String?
+  contactEmail  String?
+  contactPhone  String?
+  timezone      String        @default("Asia/Kolkata")
+  trialEndsAt   DateTime?
+  suspendedAt   DateTime?
+  suspendReason String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  branches    Branch[]
+  departments Department[]
+  employees   Employee[]
+  users       User[]
+  attendance  AttendanceRecord[]
+  leaves      LeaveRequest[]
+  auditLogs   AuditLog[]
+}
+
+/// An office or field location of a company (replaces the "store" concept).
+model Branch {
+  id          String     @id @default(cuid())
+  companyId   String
+  name        String
+  type        BranchType @default(OFFICE)
+  address     String?
+  city        String?
+  isHeadOffice Boolean   @default(false)
+  active      Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employees Employee[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model Department {
+  id        String   @id @default(cuid())
+  companyId String
+  name      String
+  createdAt DateTime @default(now())
+
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employees Employee[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model Employee {
+  id           String         @id @default(cuid())
+  companyId    String
+  /// Company-local code, unique within the company (e.g. "E-0007").
+  code         String
+  name         String
+  email        String?
+  phone        String?
+  designation  String?
+  workType     WorkType       @default(OFFICE)
+  status       EmployeeStatus @default(ACTIVE)
+  branchId     String?
+  departmentId String?
+  /// Direct manager. Drives what a MANAGER login can see.
+  managerId    String?
+  joinedOn     DateTime       @db.Date
+  exitedOn     DateTime?      @db.Date
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  company    Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch     Branch?            @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  department Department?        @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  manager    Employee?          @relation("Reports", fields: [managerId], references: [id], onDelete: SetNull)
+  reports    Employee[]         @relation("Reports")
+  user       User?
+  attendance AttendanceRecord[]
+  leaves     LeaveRequest[]
+
+  @@unique([companyId, code])
+  @@index([companyId, status])
+  @@index([managerId])
+}
+
+model User {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  name               String
+  passwordHash       String
+  role               Role
+  /// Null only for SUPER_ADMIN.
+  companyId          String?
+  /// The staff record this login belongs to (optional, but lets a MANAGER see their team).
+  employeeId         String?   @unique
+  mustChangePassword Boolean   @default(true)
+  deletedAt          DateTime?
+  lastLoginAt        DateTime?
+  createdAt          DateTime  @default(now())
+
+  company  Company?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employee Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, role])
+}
+
+model AttendanceRecord {
+  id         String           @id @default(cuid())
+  companyId  String
+  employeeId String
+  date       DateTime         @db.Date
+  status     AttendanceStatus
+  checkIn    DateTime?
+  checkOut   DateTime?
+  source     AttendanceSource @default(MANUAL)
+  note       String?
+  /// Field staff can record where they checked in.
+  latitude   Float?
+  longitude  Float?
+  markedById String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, date])
+  @@index([companyId, date])
+}
+
+model LeaveRequest {
+  id          String      @id @default(cuid())
+  companyId   String
+  employeeId  String
+  type        LeaveType
+  fromDate    DateTime    @db.Date
+  toDate      DateTime    @db.Date
+  /// Working days requested (Mon–Sat counted, Sundays skipped).
+  days        Float
+  reason      String?
+  status      LeaveStatus @default(PENDING)
+  decidedById String?
+  decidedAt   DateTime?
+  decisionNote String?
+  createdAt   DateTime    @default(now())
+
+  company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, status])
+  @@index([employeeId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  /// Null for platform-level (super admin) actions.
+  companyId String?
+  userId    String?
+  userName  String?
+  action    String
+  entity    String
+  entityId  String?
+  detail    String?
+  createdAt DateTime @default(now())
+
+  company Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, createdAt])
+  @@index([createdAt])
+}
