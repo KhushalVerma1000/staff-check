@@ -1,5 +1,5 @@
 import type { NextAuthConfig } from 'next-auth';
-import type { Role } from '@prisma/client';
+import type { Role } from '@/generated/prisma/client';
 
 /**
  * Edge-safe Auth.js config shared by `src/auth.ts` and `src/middleware.ts`.

@@ -22,8 +22,8 @@ Tenant isolation is enforced in code, not just in the UI: every query is scoped 
 
 ```bash
 cp .env.example .env        # fill in DATABASE_URL, DIRECT_URL, AUTH_SECRET (openssl rand -base64 32)
-npm install
-npx prisma migrate dev --name init   # first run only: creates and commits the initial migration
+npm install                 # also runs `prisma generate`
+npx prisma migrate dev --name init   # first run only: creates the initial migration
 npm run db:seed             # creates the super admin (and a demo company with SEED_DEMO=1)
 npm run dev
 ```
@@ -39,7 +39,17 @@ Sign in as the super admin, add a client company, and share the one-time admin p
 | `npm run dev` / `build` / `start` | Next.js |
 | `npm test` | Unit tests for permissions, tenant scoping, attendance maths, leave days, CSV safety |
 | `npm run type-check` | `tsc --noEmit` |
-| `npm run db:migrate` / `db:deploy` / `db:seed` | Prisma |
+| `npm run db:generate` / `db:migrate` / `db:deploy` / `db:seed` | Prisma (see below) |
+
+## Prisma 7
+
+The project runs on Prisma 7, which changed a few things worth knowing:
+
+- **Connection URLs live in `prisma.config.ts`**, not in `schema.prisma`. The CLI (migrate, studio) uses `DIRECT_URL` — a direct, non-pooled connection. The running app uses `DATABASE_URL` (the pooled one) through the `@prisma/adapter-pg` driver adapter in `src/lib/prisma.ts`. Locally they can be the same URL.
+- **The client is generated into `src/generated/prisma`** (gitignored) and imported from `@/generated/prisma/client`. `npm install` and `npm run build` regenerate it; run `npm run db:generate` after editing the schema.
+- **`migrate dev` no longer generates the client or seeds automatically.** Run `npm run db:generate` and `npm run db:seed` yourself.
+- The Postgres driver pool is configured with a 5-second connection timeout (node-postgres has none by default). If your provider uses a self-signed certificate and you see error `P1010`, fix the CA trust rather than disabling verification.
+- Needs Node 20.19+.
 
 ## Layout
 

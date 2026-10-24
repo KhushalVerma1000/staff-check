@@ -1,11 +1,12 @@
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  // Generated into the source tree (gitignored); `npm install` and `npm run build` regenerate it.
+  output   = "../src/generated/prisma"
 }
 
+// Connection URLs live in prisma.config.ts (Prisma 7).
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

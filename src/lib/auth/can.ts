@@ -1,4 +1,4 @@
-import type { Role } from '@prisma/client';
+import type { Role } from '@/generated/prisma/client';
 
 /** Minimal shape of the signed-in user that permission checks need. */
 export interface Actor {

@@ -4,10 +4,13 @@
  *   SEED_DEMO=1                                         also create "Demo Traders" with one login per role
  * Safe to re-run: existing rows are left alone (passwords are never overwritten).
  */
-import { PrismaClient } from '@prisma/client';
+import 'dotenv/config';
+import { PrismaPg } from '@prisma/adapter-pg';
 import bcrypt from 'bcryptjs';
+import { PrismaClient } from '../src/generated/prisma/client';
 
-const prisma = new PrismaClient();
+if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is not set.');
+const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
 
 async function ensureUser(data: {
   email: string;
