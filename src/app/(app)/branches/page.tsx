@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
-import { prisma } from '@/lib/prisma';
+import { asc, desc, eq } from 'drizzle-orm';
+import { db, branch, employee } from '@/db';
 import { requireCompanyActor } from '@/lib/session';
 import { createBranchAction, toggleBranchAction } from './actions';
 
@@ -13,11 +14,12 @@ export const metadata = { title: 'Branches' };
 
 export default async function BranchesPage() {
   const actor = await requireCompanyActor('branch:manage');
-  const branches = await prisma.branch.findMany({
-    where: { companyId: actor.companyId },
-    orderBy: [{ isHeadOffice: 'desc' }, { name: 'asc' }],
-    include: { _count: { select: { employees: { where: { status: 'ACTIVE' } } } } },
+  const rows = await db.query.branch.findMany({
+    where: eq(branch.companyId, actor.companyId),
+    orderBy: [desc(branch.isHeadOffice), asc(branch.name)],
+    with: { employees: { where: eq(employee.status, 'ACTIVE'), columns: { id: true } } },
   });
+  const branches = rows.map((b) => ({ ...b, _count: { employees: b.employees.length } }));
 
   return (
     <>

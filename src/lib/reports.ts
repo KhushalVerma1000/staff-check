@@ -1,7 +1,8 @@
+import { and, asc, gte, isNull, lte, or } from 'drizzle-orm';
+import { db, attendanceRecord, employee } from '@/db';
 import { monthRange, summarize, workingDaysBetween, type AttendanceSummary } from '@/lib/attendance/summary';
 import type { Actor } from '@/lib/auth/can';
-import { prisma } from '@/lib/prisma';
-import { employeeScope } from '@/lib/tenant/scope';
+import { employeeFilter } from '@/lib/tenant/sql';
 
 export interface ReportRow extends AttendanceSummary {
   employeeId: string;
@@ -23,18 +24,20 @@ export async function loadMonthlyReport(actor: Actor, month: string): Promise<Mo
   const { from, to } = monthRange(month);
   const workingDays = workingDaysBetween(from, to);
 
-  const employees = await prisma.employee.findMany({
-    where: {
-      AND: [
-        employeeScope(actor),
-        { joinedOn: { lte: to }, OR: [{ exitedOn: null }, { exitedOn: { gte: from } }] },
-      ],
-    },
-    orderBy: { name: 'asc' },
-    include: {
-      branch: { select: { name: true } },
-      department: { select: { name: true } },
-      attendance: { where: { date: { gte: from, lte: to } }, select: { status: true } },
+  const employees = await db.query.employee.findMany({
+    where: and(
+      employeeFilter(actor),
+      lte(employee.joinedOn, to),
+      or(isNull(employee.exitedOn), gte(employee.exitedOn, from)),
+    ),
+    orderBy: asc(employee.name),
+    with: {
+      branch: { columns: { name: true } },
+      department: { columns: { name: true } },
+      attendance: {
+        where: and(gte(attendanceRecord.date, from), lte(attendanceRecord.date, to)),
+        columns: { status: true },
+      },
     },
   });
 

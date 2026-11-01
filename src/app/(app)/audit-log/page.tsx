@@ -1,17 +1,19 @@
 import { PageHeader } from '@/components/shell/app-shell';
 import { Card, CardContent } from '@/components/ui/card';
-import { prisma } from '@/lib/prisma';
+import { desc, eq } from 'drizzle-orm';
+import { db, auditLog } from '@/db';
 import { requireCompanyActor } from '@/lib/session';
 
 export const metadata = { title: 'Audit log' };
 
 export default async function AuditLogPage() {
   const actor = await requireCompanyActor('auditLog:view');
-  const entries = await prisma.auditLog.findMany({
-    where: { companyId: actor.companyId },
-    orderBy: { createdAt: 'desc' },
-    take: 200,
-  });
+  const entries = await db
+    .select()
+    .from(auditLog)
+    .where(eq(auditLog.companyId, actor.companyId))
+    .orderBy(desc(auditLog.createdAt))
+    .limit(200);
 
   return (
     <>

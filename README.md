@@ -2,7 +2,7 @@
 
 Team, attendance and leave management for small and medium businesses (up to 100 people), run as a multi-tenant service: each client company gets its own isolated workspace, and a **super admin dashboard** manages those clients.
 
-Built on the same stack as the HRMS project (Next.js App Router, Prisma, Auth.js, Tailwind), trimmed to what a small business needs — no biometric devices, no payroll engine, no stores. Locations are **branches** (office or field) and people are grouped into **departments**.
+Built with Next.js (App Router), Drizzle ORM on Neon Postgres, Better Auth and Tailwind, trimmed to what a small business needs — no biometric devices, no payroll engine, no stores. Locations are **branches** (office or field) and people are grouped into **departments**.
 
 ## Who can do what
 
@@ -21,16 +21,16 @@ Tenant isolation is enforced in code, not just in the UI: every query is scoped 
 ## Getting started
 
 ```bash
-cp .env.example .env        # fill in DATABASE_URL, DIRECT_URL, AUTH_SECRET (openssl rand -base64 32)
-npm install                 # also runs `prisma generate`
-npx prisma migrate dev --name init   # first run only: creates the initial migration
+cp .env.example .env        # fill in DATABASE_URL, DIRECT_URL, BETTER_AUTH_SECRET (openssl rand -base64 32)
+npm install
+npm run db:migrate          # applies the committed migrations in src/db/migrations
 npm run db:seed             # creates the super admin (and a demo company with SEED_DEMO=1)
 npm run dev
 ```
 
 Sign in as the super admin, add a client company, and share the one-time admin password it shows (once). Every new login must set its own password on first sign-in.
 
-> The first migration is not committed yet: it has to be generated against a real Postgres database with `prisma migrate dev`. Commit the generated `prisma/migrations/` folder after running it.
+> Change the schema in `src/db/schema`, then `npm run db:generate` to create a migration and commit it.
 
 ## Scripts
 
@@ -39,17 +39,15 @@ Sign in as the super admin, add a client company, and share the one-time admin p
 | `npm run dev` / `build` / `start` | Next.js |
 | `npm test` | Unit tests for permissions, tenant scoping, attendance maths, leave days, CSV safety |
 | `npm run type-check` | `tsc --noEmit` |
-| `npm run db:generate` / `db:migrate` / `db:deploy` / `db:seed` | Prisma (see below) |
+| `npm run db:generate` / `db:migrate` / `db:seed` | Drizzle: generate a migration from `src/db/schema`, apply migrations, seed |
 
-## Prisma 7
+## Data and auth
 
-The project runs on Prisma 7, which changed a few things worth knowing:
-
-- **Connection URLs live in `prisma.config.ts`**, not in `schema.prisma`. The CLI (migrate, studio) uses `DIRECT_URL` — a direct, non-pooled connection. The running app uses `DATABASE_URL` (the pooled one) through the `@prisma/adapter-pg` driver adapter in `src/lib/prisma.ts`. Locally they can be the same URL.
-- **The client is generated into `src/generated/prisma`** (gitignored) and imported from `@/generated/prisma/client`. `npm install` and `npm run build` regenerate it; run `npm run db:generate` after editing the schema.
-- **`migrate dev` no longer generates the client or seeds automatically.** Run `npm run db:generate` and `npm run db:seed` yourself.
-- The Postgres driver pool is configured with a 5-second connection timeout (node-postgres has none by default). If your provider uses a self-signed certificate and you see error `P1010`, fix the CA trust rather than disabling verification.
-- Needs Node 20.19+.
+- **Drizzle ORM on Postgres.** Schema in `src/db/schema`, migrations committed in `src/db/migrations`. The app uses the pooled `DATABASE_URL` (`src/db/index.ts`, 5 s connection timeout, `DB_POOL_MAX`); `db:migrate` uses `DIRECT_URL`.
+- **Better Auth** (`src/lib/auth/server.ts`): email + password, database-backed cookie sessions, public sign-up off. Logins are created with `createLogin` (`src/lib/auth/users.ts`). Removing a login or suspending a company revokes live sessions. `src/lib/session.ts` re-reads the user on every request and enforces the one-time-password change.
+- **Tenant scoping**: start every tenant query with `inCompany(table, companyId)` / `employeeFilter(actor)` (`src/lib/tenant/sql.ts`).
+- **Data layer skeleton** (`src/lib/data`): circuit breaker, tenant placement, Cloudinary account choice and outbox replay, the pieces of the balancer in the spec. MongoDB and Cloudinary clients arrive with the attendance phase.
+- Needs Node 20.9+.
 
 ## Layout
 

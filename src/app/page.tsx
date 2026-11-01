@@ -1,8 +1,8 @@
 import { redirect } from 'next/navigation';
-import { auth } from '@/auth';
+import { getSessionUser } from '@/lib/session';
 
 export default async function Home() {
-  const session = await auth();
-  if (!session?.user) redirect('/login');
-  redirect(session.user.role === 'SUPER_ADMIN' ? '/platform' : '/dashboard');
+  const user = await getSessionUser();
+  if (!user) redirect('/login');
+  redirect(user.role === 'SUPER_ADMIN' ? '/platform' : '/dashboard');
 }

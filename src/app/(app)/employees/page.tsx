@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { and, asc, eq, ilike, or, type SQL } from 'drizzle-orm';
+import { db, branch, department, employee } from '@/db';
 import { PageHeader } from '@/components/shell/app-shell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -7,10 +9,9 @@ import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { can } from '@/lib/auth/can';
 import { WORK_TYPE_LABEL } from '@/lib/labels';
-import { prisma } from '@/lib/prisma';
 import { requireCompanyActor } from '@/lib/session';
 import { headcount } from '@/lib/tenant/headcount';
-import { employeeScope } from '@/lib/tenant/scope';
+import { employeeFilter } from '@/lib/tenant/sql';
 
 export const metadata = { title: 'Employees' };
 
@@ -24,26 +25,28 @@ export default async function EmployeesPage({
   const status = sp.status === 'INACTIVE' ? 'INACTIVE' : sp.status === 'ALL' ? undefined : 'ACTIVE';
   const q = sp.q?.trim();
 
+  // LIKE wildcards typed by the user are escaped so they match literally.
+  const like = q ? `%${q.replace(/[\\%_]/g, '\\$&')}%` : undefined;
+  const filters: Array<SQL | undefined> = [
+    employeeFilter(actor),
+    status ? eq(employee.status, status) : undefined,
+    sp.branch ? eq(employee.branchId, sp.branch) : undefined,
+    sp.dept ? eq(employee.departmentId, sp.dept) : undefined,
+    like ? or(ilike(employee.name, like), ilike(employee.code, like)) : undefined,
+  ];
+
   const [employees, branches, departments, hc] = await Promise.all([
-    prisma.employee.findMany({
-      where: {
-        AND: [
-          employeeScope(actor),
-          {
-            ...(status ? { status } : {}),
-            ...(sp.branch ? { branchId: sp.branch } : {}),
-            ...(sp.dept ? { departmentId: sp.dept } : {}),
-            ...(q
-              ? { OR: [{ name: { contains: q, mode: 'insensitive' as const } }, { code: { contains: q, mode: 'insensitive' as const } }] }
-              : {}),
-          },
-        ],
-      },
-      orderBy: { name: 'asc' },
-      include: { branch: { select: { name: true } }, department: { select: { name: true } }, manager: { select: { name: true } } },
+    db.query.employee.findMany({
+      where: and(...filters),
+      orderBy: asc(employee.name),
+      with: { branch: { columns: { name: true } }, department: { columns: { name: true } }, manager: { columns: { name: true } } },
     }),
-    prisma.branch.findMany({ where: { companyId: actor.companyId }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
-    prisma.department.findMany({ where: { companyId: actor.companyId }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    db.select({ id: branch.id, name: branch.name }).from(branch).where(eq(branch.companyId, actor.companyId)).orderBy(asc(branch.name)),
+    db
+      .select({ id: department.id, name: department.name })
+      .from(department)
+      .where(eq(department.companyId, actor.companyId))
+      .orderBy(asc(department.name)),
     headcount(actor.companyId),
   ]);
 

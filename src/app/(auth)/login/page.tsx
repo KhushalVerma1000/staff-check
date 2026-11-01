@@ -1,11 +1,15 @@
+import { redirect } from 'next/navigation';
 import { ActionForm, Field } from '@/components/action-form';
 import { Input } from '@/components/ui/input';
+import { getSessionUser } from '@/lib/session';
 import { loginAction } from './actions';
 
 export const metadata = { title: 'Sign in' };
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ from?: string }> }) {
   const { from } = await searchParams;
+  const me = await getSessionUser();
+  if (me) redirect(me.role === 'SUPER_ADMIN' ? '/platform' : '/dashboard');
   return (
     <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
       <div className="w-full max-w-sm space-y-6">

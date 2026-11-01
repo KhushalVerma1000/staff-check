@@ -1,5 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { and, asc, eq, ne } from 'drizzle-orm';
+import { db, branch, department, employee } from '@/db';
 import { ActionForm } from '@/components/action-form';
 import { EmployeeFields } from '@/components/employee-fields';
 import { PageHeader } from '@/components/shell/app-shell';
@@ -8,7 +10,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { can } from '@/lib/auth/can';
 import { fmtDate, WORK_TYPE_LABEL } from '@/lib/labels';
-import { prisma } from '@/lib/prisma';
 import { requireCompanyActor } from '@/lib/session';
 import { headcount } from '@/lib/tenant/headcount';
 import { canSeeEmployee } from '@/lib/tenant/scope';
@@ -20,13 +21,13 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
   const { id } = await params;
   const actor = await requireCompanyActor('employee:view');
 
-  const emp = await prisma.employee.findFirst({
-    where: { id, companyId: actor.companyId },
-    include: {
-      branch: { select: { name: true } },
-      department: { select: { name: true } },
-      manager: { select: { name: true } },
-      reports: { where: { status: 'ACTIVE' }, select: { id: true, name: true } },
+  const emp = await db.query.employee.findFirst({
+    where: and(eq(employee.id, id), eq(employee.companyId, actor.companyId)),
+    with: {
+      branch: { columns: { name: true } },
+      department: { columns: { name: true } },
+      manager: { columns: { name: true } },
+      reports: { where: eq(employee.status, 'ACTIVE'), columns: { id: true, name: true } },
     },
   });
   if (!emp || !canSeeEmployee(actor, emp)) notFound();
@@ -34,13 +35,21 @@ export default async function EmployeePage({ params }: { params: Promise<{ id: s
   const canEdit = can(actor, 'employee:edit', { companyId: emp.companyId });
   const [branches, departments, managers, hc] = canEdit
     ? await Promise.all([
-        prisma.branch.findMany({ where: { companyId: actor.companyId, active: true }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
-        prisma.department.findMany({ where: { companyId: actor.companyId }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
-        prisma.employee.findMany({
-          where: { companyId: actor.companyId, status: 'ACTIVE', NOT: { id: emp.id } },
-          orderBy: { name: 'asc' },
-          select: { id: true, name: true },
-        }),
+        db
+          .select({ id: branch.id, name: branch.name })
+          .from(branch)
+          .where(and(eq(branch.companyId, actor.companyId), eq(branch.active, true)))
+          .orderBy(asc(branch.name)),
+        db
+          .select({ id: department.id, name: department.name })
+          .from(department)
+          .where(eq(department.companyId, actor.companyId))
+          .orderBy(asc(department.name)),
+        db
+          .select({ id: employee.id, name: employee.name })
+          .from(employee)
+          .where(and(eq(employee.companyId, actor.companyId), eq(employee.status, 'ACTIVE'), ne(employee.id, emp.id)))
+          .orderBy(asc(employee.name)),
         headcount(actor.companyId),
       ])
     : [[], [], [], null];

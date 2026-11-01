@@ -1,3 +1,5 @@
+import { and, asc, eq, isNull, notExists } from 'drizzle-orm';
+import { db, employee, user as userTable } from '@/db';
 import { ActionForm, Field } from '@/components/action-form';
 import { PageHeader } from '@/components/shell/app-shell';
 import { Button } from '@/components/ui/button';
@@ -6,7 +8,6 @@ import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { COMPANY_ROLES } from '@/lib/auth/can';
 import { ROLE_LABEL } from '@/lib/labels';
-import { prisma } from '@/lib/prisma';
 import { requireCompanyActor } from '@/lib/session';
 import { changeRoleAction, createUserAction, removeUserAction, resetPasswordAction } from './actions';
 
@@ -15,16 +16,31 @@ export const metadata = { title: 'Logins' };
 export default async function UsersPage() {
   const actor = await requireCompanyActor('user:manage');
   const [users, unlinked] = await Promise.all([
-    prisma.user.findMany({
-      where: { companyId: actor.companyId, deletedAt: null },
-      orderBy: [{ role: 'asc' }, { name: 'asc' }],
-      include: { employee: { select: { name: true, code: true } } },
-    }),
-    prisma.employee.findMany({
-      where: { companyId: actor.companyId, status: 'ACTIVE', user: null },
-      orderBy: { name: 'asc' },
-      select: { id: true, name: true, code: true },
-    }),
+    db
+      .select({
+        id: userTable.id,
+        name: userTable.name,
+        email: userTable.email,
+        role: userTable.role,
+        lastLoginAt: userTable.lastLoginAt,
+        employeeName: employee.name,
+        employeeCode: employee.code,
+      })
+      .from(userTable)
+      .leftJoin(employee, eq(employee.id, userTable.employeeId))
+      .where(and(eq(userTable.companyId, actor.companyId), isNull(userTable.deletedAt)))
+      .orderBy(asc(userTable.role), asc(userTable.name)),
+    db
+      .select({ id: employee.id, name: employee.name, code: employee.code })
+      .from(employee)
+      .where(
+        and(
+          eq(employee.companyId, actor.companyId),
+          eq(employee.status, 'ACTIVE'),
+          notExists(db.select({ x: userTable.id }).from(userTable).where(eq(userTable.employeeId, employee.id))),
+        ),
+      )
+      .orderBy(asc(employee.name)),
   ]);
 
   return (
@@ -45,7 +61,7 @@ export default async function UsersPage() {
                     </p>
                     <p className="text-sm text-gray-500">
                       {u.email}
-                      {u.employee ? ` · ${u.employee.name} (${u.employee.code})` : ' · not linked to a staff record'}
+                      {u.employeeName ? ` · ${u.employeeName} (${u.employeeCode})` : ' · not linked to a staff record'}
                     </p>
                   </div>
                   <p className="text-xs text-gray-500">

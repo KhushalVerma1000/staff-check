@@ -1,15 +1,16 @@
 'use server';
 
-import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
+import { and, count, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
+import { db, branch, company as companyTable, employee, user as userTable } from '@/db';
 import { done, fail, type ActionResult } from '@/lib/action-result';
 import { audit } from '@/lib/audit';
 import { assertCan } from '@/lib/auth/can';
+import { createLogin, resetLoginPassword, revokeSessions } from '@/lib/auth/users';
 import { firstIssue, optional, text } from '@/lib/form';
 import { MAX_EMPLOYEES, PLAN_LIMITS } from '@/lib/labels';
 import { generateTempPassword } from '@/lib/password';
-import { prisma } from '@/lib/prisma';
 import { getActor } from '@/lib/session';
 import { slugify } from '@/lib/slug';
 
@@ -52,36 +53,40 @@ export async function createCompanyAction(_p: ActionResult | null, fd: FormData)
     return fail('Unknown timezone. Use an IANA name such as Asia/Kolkata.');
   }
 
-  if (await prisma.user.findUnique({ where: { email: d.adminEmail }, select: { id: true } })) {
+  if ((await db.select({ id: userTable.id }).from(userTable).where(eq(userTable.email, d.adminEmail)).limit(1))[0]) {
     return fail('That admin email already has a login.');
   }
 
   // Unique slug: acme, acme-2, acme-3…
   const base = slugify(d.name);
   let slug = base;
-  for (let n = 2; await prisma.company.findUnique({ where: { slug }, select: { id: true } }); n++) slug = `${base}-${n}`;
+  for (let n = 2; (await db.select({ id: companyTable.id }).from(companyTable).where(eq(companyTable.slug, slug)).limit(1))[0]; n++) slug = `${base}-${n}`;
 
   const temp = generateTempPassword();
-  const passwordHash = await bcrypt.hash(temp, 12);
   const trialEndsAt = d.trialDays > 0 ? new Date(Date.now() + d.trialDays * 86_400_000) : null;
 
-  const company = await prisma.company.create({
-    data: {
-      name: d.name,
-      slug,
-      plan: d.plan,
-      employeeLimit: d.employeeLimit,
-      timezone: d.timezone,
-      status: trialEndsAt ? 'TRIAL' : 'ACTIVE',
-      trialEndsAt,
-      contactName: d.contactName,
-      contactEmail: d.contactEmail,
-      contactPhone: d.contactPhone,
-      branches: { create: { name: 'Head office', type: 'OFFICE', isHeadOffice: true } },
-      users: {
-        create: { name: d.adminName, email: d.adminEmail, role: 'ADMIN', passwordHash, mustChangePassword: true },
-      },
-    },
+  const company = await db.transaction(async (tx) => {
+    const [co] = await tx
+      .insert(companyTable)
+      .values({
+        name: d.name,
+        slug,
+        plan: d.plan,
+        employeeLimit: d.employeeLimit,
+        timezone: d.timezone,
+        status: trialEndsAt ? 'TRIAL' : 'ACTIVE',
+        trialEndsAt,
+        contactName: d.contactName,
+        contactEmail: d.contactEmail,
+        contactPhone: d.contactPhone,
+      })
+      .returning();
+    await tx.insert(branch).values({ companyId: co.id, name: 'Head office', type: 'OFFICE', isHeadOffice: true });
+    await createLogin(
+      { name: d.adminName, email: d.adminEmail, role: 'ADMIN', password: temp, companyId: co.id, mustChangePassword: true },
+      tx,
+    );
+    return co;
   });
   await audit({ companyId: null, userId: actor.id, action: 'company.create', entity: 'Company', entityId: company.id, detail: `${company.name} (${slug})` });
 
@@ -117,23 +122,26 @@ export async function updateCompanyAction(_p: ActionResult | null, fd: FormData)
   });
   if (!parsed.success) return fail(firstIssue(parsed.error));
 
-  const company = await prisma.company.findUnique({ where: { id }, select: { id: true } });
-  if (!company) return fail('Company not found.');
+  const [existing] = await db.select({ id: companyTable.id }).from(companyTable).where(eq(companyTable.id, id)).limit(1);
+  if (!existing) return fail('Company not found.');
 
-  const active = await prisma.employee.count({ where: { companyId: id, status: 'ACTIVE' } });
+  const [{ n: active }] = await db
+    .select({ n: count() })
+    .from(employee)
+    .where(and(eq(employee.companyId, id), eq(employee.status, 'ACTIVE')));
   if (parsed.data.employeeLimit < active) {
     return fail(`They already have ${active} active employees. Set the limit to ${active} or more.`);
   }
 
-  await prisma.company.update({
-    where: { id },
-    data: {
+  await db
+    .update(companyTable)
+    .set({
       ...parsed.data,
       contactName: parsed.data.contactName ?? null,
       contactEmail: parsed.data.contactEmail ?? null,
       contactPhone: parsed.data.contactPhone ?? null,
-    },
-  });
+    })
+    .where(eq(companyTable.id, id));
   await audit({
     companyId: null,
     userId: actor.id,
@@ -154,16 +162,22 @@ export async function setCompanyStatusAction(_p: ActionResult | null, fd: FormDa
   const target = text(fd, 'status');
   if (target !== 'SUSPENDED' && target !== 'ACTIVE') return fail('Unknown status.');
 
-  const company = await prisma.company.findUnique({ where: { id }, select: { name: true } });
+  const [company] = await db.select({ name: companyTable.name }).from(companyTable).where(eq(companyTable.id, id)).limit(1);
   if (!company) return fail('Company not found.');
 
-  await prisma.company.update({
-    where: { id },
-    data:
+  await db
+    .update(companyTable)
+    .set(
       target === 'SUSPENDED'
         ? { status: 'SUSPENDED', suspendedAt: new Date(), suspendReason: optional(fd, 'reason') ?? null }
         : { status: 'ACTIVE', suspendedAt: null, suspendReason: null },
-  });
+    )
+    .where(eq(companyTable.id, id));
+  if (target === 'SUSPENDED') {
+    // End live sessions now; sign-in is also refused while suspended.
+    const members = await db.select({ id: userTable.id }).from(userTable).where(eq(userTable.companyId, id));
+    await Promise.all(members.map((m) => revokeSessions(m.id)));
+  }
   await audit({
     companyId: null,
     userId: actor.id,
@@ -174,7 +188,7 @@ export async function setCompanyStatusAction(_p: ActionResult | null, fd: FormDa
   });
   revalidatePath(`/platform/companies/${id}`);
   revalidatePath('/platform/companies');
-  return done(target === 'SUSPENDED' ? 'Suspended. Their users are signed out within a minute.' : 'Reactivated.');
+  return done(target === 'SUSPENDED' ? 'Suspended. Their users are signed out.' : 'Reactivated.');
 }
 
 export async function resetCompanyAdminAction(_p: ActionResult | null, fd: FormData): Promise<ActionResult> {
@@ -183,11 +197,15 @@ export async function resetCompanyAdminAction(_p: ActionResult | null, fd: FormD
   const userId = text(fd, 'userId');
   const companyId = text(fd, 'companyId');
 
-  const user = await prisma.user.findFirst({ where: { id: userId, companyId, role: 'ADMIN', deletedAt: null } });
+  const [user] = await db
+    .select()
+    .from(userTable)
+    .where(and(eq(userTable.id, userId), eq(userTable.companyId, companyId), eq(userTable.role, 'ADMIN'), isNull(userTable.deletedAt)))
+    .limit(1);
   if (!user) return fail('Admin login not found.');
 
   const temp = generateTempPassword();
-  await prisma.user.update({ where: { id: userId }, data: { passwordHash: await bcrypt.hash(temp, 12), mustChangePassword: true } });
+  await resetLoginPassword(userId, temp, true);
   await audit({ companyId: null, userId: actor.id, action: 'company.resetAdminPassword', entity: 'User', entityId: userId, detail: user.email });
   return done(`New one-time password for ${user.email}: ${temp} — shown only once.`);
 }

@@ -1,15 +1,18 @@
 'use server';
 
-import bcrypt from 'bcryptjs';
+import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { auth, forgetLoginState, signOut } from '@/auth';
-import { prisma } from '@/lib/prisma';
+import { APIError } from 'better-auth/api';
+import { eq } from 'drizzle-orm';
+import { db, user } from '@/db';
+import { auth } from '@/lib/auth/server';
 import { fail, type ActionResult } from '@/lib/action-result';
 import { passwordProblem } from '@/lib/password';
+import { getSessionUser } from '@/lib/session';
 
 export async function changePasswordAction(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
-  const session = await auth();
-  if (!session?.user?.id) redirect('/login');
+  const me = await getSessionUser();
+  if (!me) redirect('/login');
 
   const current = String(formData.get('current') ?? '');
   const next = String(formData.get('next') ?? '');
@@ -20,16 +23,18 @@ export async function changePasswordAction(_prev: ActionResult | null, formData:
   if (next !== confirm) return fail('The two new passwords do not match.');
   if (next === current) return fail('Choose a password different from the current one.');
 
-  const user = await prisma.user.findUnique({ where: { id: session.user.id }, select: { passwordHash: true } });
-  if (!user || !(await bcrypt.compare(current, user.passwordHash))) return fail('Current password is incorrect.');
+  try {
+    // Also signs out every other device.
+    await auth.api.changePassword({
+      body: { currentPassword: current, newPassword: next, revokeOtherSessions: true },
+      headers: await headers(),
+    });
+  } catch (e) {
+    if (e instanceof APIError) return fail('Current password is incorrect.');
+    throw e;
+  }
+  await db.update(user).set({ mustChangePassword: false }).where(eq(user.id, me.id));
 
-  await prisma.user.update({
-    where: { id: session.user.id },
-    data: { passwordHash: await bcrypt.hash(next, 12), mustChangePassword: false },
-  });
-  forgetLoginState(session.user.id);
-
-  // The JWT still says mustChangePassword — sign out so the next sign-in picks up the new state.
-  await signOut({ redirectTo: '/login' });
-  return { ok: true };
+  // Sessions are read from the database, so the current one is already up to date.
+  redirect('/');
 }

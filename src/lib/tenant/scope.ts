@@ -10,7 +10,7 @@ export function companyIdOf(actor: Actor): string {
 }
 
 /**
- * Prisma `where` fragment limiting Employee rows to what the actor may see.
+ * Descriptor of the row filter (turned into SQL by employeeFilter in ./sql.ts) limiting Employee rows to what the actor may see.
  * ADMIN / HR / ACCOUNTANT see the whole company. A MANAGER sees themself and
  * their direct reports; a manager login with no linked staff record sees nothing.
  */

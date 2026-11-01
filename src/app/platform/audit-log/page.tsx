@@ -1,13 +1,14 @@
 import { PageHeader } from '@/components/shell/app-shell';
 import { Card, CardContent } from '@/components/ui/card';
-import { prisma } from '@/lib/prisma';
+import { desc, isNull } from 'drizzle-orm';
+import { db, auditLog } from '@/db';
 import { requireSuperAdmin } from '@/lib/session';
 
 export const metadata = { title: 'Platform activity' };
 
 export default async function PlatformAuditPage() {
   await requireSuperAdmin();
-  const entries = await prisma.auditLog.findMany({ where: { companyId: null }, orderBy: { createdAt: 'desc' }, take: 200 });
+  const entries = await db.select().from(auditLog).where(isNull(auditLog.companyId)).orderBy(desc(auditLog.createdAt)).limit(200);
 
   return (
     <>

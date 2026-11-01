@@ -2,13 +2,15 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { and, eq, isNull, ne } from 'drizzle-orm';
 import { z } from 'zod';
+import { db, employee as employeeTable, user as userTable } from '@/db';
 import { done, fail, type ActionResult } from '@/lib/action-result';
 import { audit } from '@/lib/audit';
 import { assertCan } from '@/lib/auth/can';
+import { revokeSessions } from '@/lib/auth/users';
 import { parseDay } from '@/lib/attendance/summary';
 import { firstIssue, optional, text } from '@/lib/form';
-import { prisma } from '@/lib/prisma';
 import { getActor } from '@/lib/session';
 import { headcount, nextEmployeeCode } from '@/lib/tenant/headcount';
 import { checkRefs } from '@/lib/tenant/refs';
@@ -65,11 +67,16 @@ export async function createEmployeeAction(_p: ActionResult | null, fd: FormData
   if (refError) return fail(refError);
 
   const code = d.code || (await nextEmployeeCode(companyId));
-  const clash = await prisma.employee.findFirst({ where: { companyId, code }, select: { id: true } });
+  const [clash] = await db
+    .select({ id: employeeTable.id })
+    .from(employeeTable)
+    .where(and(eq(employeeTable.companyId, companyId), eq(employeeTable.code, code)))
+    .limit(1);
   if (clash) return fail(`Employee code ${code} is already used.`);
 
-  const emp = await prisma.employee.create({
-    data: {
+  const [emp] = await db
+    .insert(employeeTable)
+    .values({
       companyId,
       code,
       name: d.name,
@@ -81,8 +88,8 @@ export async function createEmployeeAction(_p: ActionResult | null, fd: FormData
       departmentId: d.departmentId,
       managerId: d.managerId,
       joinedOn,
-    },
-  });
+    })
+    .returning();
   await audit({ companyId, userId: actor.id, action: 'employee.create', entity: 'Employee', entityId: emp.id, detail: `${emp.code} ${emp.name}` });
   revalidatePath('/employees');
   redirect(`/employees/${emp.id}`);
@@ -94,7 +101,11 @@ export async function updateEmployeeAction(_p: ActionResult | null, fd: FormData
   const companyId = companyIdOf(actor);
   const id = text(fd, 'id');
 
-  const existing = await prisma.employee.findFirst({ where: { id, companyId } });
+  const [existing] = await db
+    .select()
+    .from(employeeTable)
+    .where(and(eq(employeeTable.id, id), eq(employeeTable.companyId, companyId)))
+    .limit(1);
   if (!existing) return fail('Employee not found.');
 
   const parsed = readForm(fd);
@@ -109,13 +120,17 @@ export async function updateEmployeeAction(_p: ActionResult | null, fd: FormData
 
   const code = d.code || existing.code;
   if (code !== existing.code) {
-    const clash = await prisma.employee.findFirst({ where: { companyId, code, NOT: { id } }, select: { id: true } });
+    const [clash] = await db
+      .select({ id: employeeTable.id })
+      .from(employeeTable)
+      .where(and(eq(employeeTable.companyId, companyId), eq(employeeTable.code, code), ne(employeeTable.id, id)))
+      .limit(1);
     if (clash) return fail(`Employee code ${code} is already used.`);
   }
 
-  await prisma.employee.update({
-    where: { id },
-    data: {
+  await db
+    .update(employeeTable)
+    .set({
       code,
       name: d.name,
       email: d.email ?? null,
@@ -126,8 +141,8 @@ export async function updateEmployeeAction(_p: ActionResult | null, fd: FormData
       departmentId: d.departmentId ?? null,
       managerId: d.managerId ?? null,
       joinedOn,
-    },
-  });
+    })
+    .where(and(eq(employeeTable.id, id), eq(employeeTable.companyId, companyId)));
   await audit({ companyId, userId: actor.id, action: 'employee.update', entity: 'Employee', entityId: id, detail: `${code} ${d.name}` });
   revalidatePath('/employees');
   revalidatePath(`/employees/${id}`);
@@ -142,7 +157,11 @@ export async function setEmployeeStatusAction(formData: FormData): Promise<void>
   const target = text(formData, 'status');
   if (target !== 'ACTIVE' && target !== 'INACTIVE') return;
 
-  const emp = await prisma.employee.findFirst({ where: { id, companyId } });
+  const [emp] = await db
+    .select()
+    .from(employeeTable)
+    .where(and(eq(employeeTable.id, id), eq(employeeTable.companyId, companyId)))
+    .limit(1);
   if (!emp || emp.status === target) return;
 
   if (target === 'ACTIVE') {
@@ -150,18 +169,23 @@ export async function setEmployeeStatusAction(formData: FormData): Promise<void>
     if (room <= 0) return; // the page explains the limit; never exceed it
   }
 
-  await prisma.employee.update({
-    where: { id },
-    data: {
+  await db
+    .update(employeeTable)
+    .set({
       status: target,
       exitedOn: target === 'INACTIVE' ? new Date(new Date().toISOString().slice(0, 10)) : null,
       // Staff who leave stop reporting into / managing others and lose their login.
       ...(target === 'INACTIVE' ? { managerId: null } : {}),
-    },
-  });
+    })
+    .where(and(eq(employeeTable.id, id), eq(employeeTable.companyId, companyId)));
   if (target === 'INACTIVE') {
-    await prisma.employee.updateMany({ where: { companyId, managerId: id }, data: { managerId: null } });
-    await prisma.user.updateMany({ where: { companyId, employeeId: id, deletedAt: null }, data: { deletedAt: new Date() } });
+    await db.update(employeeTable).set({ managerId: null }).where(and(eq(employeeTable.companyId, companyId), eq(employeeTable.managerId, id)));
+    const removed = await db
+      .update(userTable)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(userTable.companyId, companyId), eq(userTable.employeeId, id), isNull(userTable.deletedAt)))
+      .returning({ id: userTable.id });
+    await Promise.all(removed.map((u) => revokeSessions(u.id)));
   }
   await audit({
     companyId,

@@ -1,46 +1,28 @@
-import NextAuth from 'next-auth';
-import { NextResponse } from 'next/server';
-import { authConfig } from '@/auth.config';
-
-// Edge-safe instance: no Prisma / bcrypt here (see src/auth.config.ts).
-const { auth } = NextAuth(authConfig);
+import { NextResponse, type NextRequest } from 'next/server';
 
 /**
- * Coarse route guard. Every server action ALSO calls can() — this is
- * defence in depth, not the only enforcement.
+ * Coarse, edge-safe gate: is there a session cookie at all? The real checks
+ * (role, company, removed / suspended, must-change-password) run on the server
+ * in src/lib/session.ts, and every server action calls can() too.
  */
-export default auth((req) => {
+export default function middleware(req: NextRequest) {
   const { nextUrl } = req;
-  const user = req.auth?.user;
   const path = nextUrl.pathname;
+  // Cookie name per Better Auth defaults (prefixed with __Secure- over https). Importing
+  // better-auth/cookies here would pull Node-only crypto into the edge bundle.
+  const hasSession = Boolean(
+    req.cookies.get('better-auth.session_token') ?? req.cookies.get('__Secure-better-auth.session_token'),
+  );
 
-  const isPublic = path === '/login' || path.startsWith('/api/auth');
-  if (isPublic) {
-    if (user && path === '/login') {
-      return NextResponse.redirect(new URL(user.role === 'SUPER_ADMIN' ? '/platform' : '/dashboard', nextUrl));
-    }
-    return NextResponse.next();
-  }
+  if (path === '/login' || path.startsWith('/api/auth')) return NextResponse.next();
 
-  if (!user) {
+  if (!hasSession) {
     const url = new URL('/login', nextUrl);
     if (path !== '/') url.searchParams.set('from', path);
     return NextResponse.redirect(url);
   }
-
-  if (user.mustChangePassword && path !== '/change-password') {
-    return NextResponse.redirect(new URL('/change-password', nextUrl));
-  }
-
-  const isSuperAdmin = user.role === 'SUPER_ADMIN';
-  const onPlatform = path === '/platform' || path.startsWith('/platform/');
-  if (onPlatform && !isSuperAdmin) return NextResponse.redirect(new URL('/dashboard', nextUrl));
-  if (!onPlatform && isSuperAdmin && path !== '/change-password' && path !== '/') {
-    return NextResponse.redirect(new URL('/platform', nextUrl));
-  }
-
   return NextResponse.next();
-});
+}
 
 export const config = {
   matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],

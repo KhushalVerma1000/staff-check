@@ -1,5 +1,6 @@
+import { and, count, eq } from 'drizzle-orm';
+import { db, company, employee } from '@/db';
 import { MAX_EMPLOYEES } from '@/lib/labels';
-import { prisma } from '@/lib/prisma';
 
 /** Effective cap: the company's own limit, never above the product-wide 100. */
 export function effectiveLimit(employeeLimit: number): number {
@@ -7,17 +8,18 @@ export function effectiveLimit(employeeLimit: number): number {
 }
 
 export async function headcount(companyId: string): Promise<{ active: number; limit: number; room: number }> {
-  const [company, active] = await Promise.all([
-    prisma.company.findUnique({ where: { id: companyId }, select: { employeeLimit: true } }),
-    prisma.employee.count({ where: { companyId, status: 'ACTIVE' } }),
+  const [[c], [n]] = await Promise.all([
+    db.select({ employeeLimit: company.employeeLimit }).from(company).where(eq(company.id, companyId)).limit(1),
+    db.select({ n: count() }).from(employee).where(and(eq(employee.companyId, companyId), eq(employee.status, 'ACTIVE'))),
   ]);
-  const limit = effectiveLimit(company?.employeeLimit ?? 0);
+  const active = n?.n ?? 0;
+  const limit = effectiveLimit(c?.employeeLimit ?? 0);
   return { active, limit, room: Math.max(0, limit - active) };
 }
 
 /** Next free "E-0001" style code for a company. */
 export async function nextEmployeeCode(companyId: string): Promise<string> {
-  const rows = await prisma.employee.findMany({ where: { companyId }, select: { code: true } });
+  const rows = await db.select({ code: employee.code }).from(employee).where(eq(employee.companyId, companyId));
   let max = 0;
   for (const r of rows) {
     const m = /^E-(\d+)$/.exec(r.code);

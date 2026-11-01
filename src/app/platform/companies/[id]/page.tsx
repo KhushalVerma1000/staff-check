@@ -6,7 +6,8 @@ import { PageHeader } from '@/components/shell/app-shell';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { prisma } from '@/lib/prisma';
+import { and, count, desc, eq, isNull } from 'drizzle-orm';
+import { db, auditLog, company as companyTable, employee, user } from '@/db';
 import { requireSuperAdmin } from '@/lib/session';
 import { effectiveLimit } from '@/lib/tenant/headcount';
 import { resetCompanyAdminAction, setCompanyStatusAction, updateCompanyAction } from '../actions';
@@ -17,19 +18,30 @@ export default async function CompanyPage({ params }: { params: Promise<{ id: st
   await requireSuperAdmin();
   const { id } = await params;
 
-  const company = await prisma.company.findUnique({
-    where: { id },
-    include: {
-      users: { where: { role: 'ADMIN', deletedAt: null }, select: { id: true, name: true, email: true, lastLoginAt: true } },
-      _count: { select: { branches: true, departments: true } },
+  const found = await db.query.company.findFirst({
+    where: eq(companyTable.id, id),
+    with: {
+      users: {
+        where: and(eq(user.role, 'ADMIN'), isNull(user.deletedAt)),
+        columns: { id: true, name: true, email: true, lastLoginAt: true },
+      },
+      branches: { columns: { id: true } },
+      departments: { columns: { id: true } },
     },
   });
-  if (!company) notFound();
+  if (!found) notFound();
+  const company = { ...found, _count: { branches: found.branches.length, departments: found.departments.length } };
 
   const [active, inactive, lastActivity] = await Promise.all([
-    prisma.employee.count({ where: { companyId: id, status: 'ACTIVE' } }),
-    prisma.employee.count({ where: { companyId: id, status: 'INACTIVE' } }),
-    prisma.auditLog.findFirst({ where: { companyId: id }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }),
+    db.select({ n: count() }).from(employee).where(and(eq(employee.companyId, id), eq(employee.status, 'ACTIVE'))).then((r) => r[0].n),
+    db.select({ n: count() }).from(employee).where(and(eq(employee.companyId, id), eq(employee.status, 'INACTIVE'))).then((r) => r[0].n),
+    db
+      .select({ createdAt: auditLog.createdAt })
+      .from(auditLog)
+      .where(eq(auditLog.companyId, id))
+      .orderBy(desc(auditLog.createdAt))
+      .limit(1)
+      .then((r) => r[0] ?? null),
   ]);
   const limit = effectiveLimit(company.employeeLimit);
 

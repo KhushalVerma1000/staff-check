@@ -1,3 +1,4 @@
+import { and, asc, eq } from 'drizzle-orm';
 import { ActionForm } from '@/components/action-form';
 import { PageHeader } from '@/components/shell/app-shell';
 import { Badge } from '@/components/ui/badge';
@@ -8,9 +9,9 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { parseDay } from '@/lib/attendance/summary';
 import { can } from '@/lib/auth/can';
 import { fmtDate, fmtTime, STATUS_LABEL } from '@/lib/labels';
-import { prisma } from '@/lib/prisma';
+import { db, attendanceRecord, branch as branchTable, company as companyTable, employee as employeeTable } from '@/db';
 import { requireCompanyActor } from '@/lib/session';
-import { employeeScope } from '@/lib/tenant/scope';
+import { employeeFilter } from '@/lib/tenant/sql';
 import { todayKey } from '@/lib/tenant/time';
 import { markAttendanceAction } from './actions';
 
@@ -20,7 +21,7 @@ export default async function AttendancePage({ searchParams }: { searchParams: P
   const actor = await requireCompanyActor('attendance:view');
   const sp = await searchParams;
 
-  const company = await prisma.company.findUnique({ where: { id: actor.companyId }, select: { timezone: true } });
+  const [company] = await db.select({ timezone: companyTable.timezone }).from(companyTable).where(eq(companyTable.id, actor.companyId)).limit(1);
   const tz = company?.timezone ?? 'UTC';
   const today = todayKey(tz);
   const dayKey = sp.date && parseDay(sp.date) && sp.date <= today ? sp.date : today;
@@ -28,15 +29,23 @@ export default async function AttendancePage({ searchParams }: { searchParams: P
   const canMark = can(actor, 'attendance:mark', { companyId: actor.companyId });
 
   const [employees, branches] = await Promise.all([
-    prisma.employee.findMany({
-      where: { AND: [employeeScope(actor), { status: 'ACTIVE', ...(sp.branch ? { branchId: sp.branch } : {}) }] },
-      orderBy: { name: 'asc' },
-      include: {
-        branch: { select: { name: true } },
-        attendance: { where: { date: day }, take: 1 },
+    db.query.employee.findMany({
+      where: and(
+        employeeFilter(actor),
+        eq(employeeTable.status, 'ACTIVE'),
+        sp.branch ? eq(employeeTable.branchId, sp.branch) : undefined,
+      ),
+      orderBy: asc(employeeTable.name),
+      with: {
+        branch: { columns: { name: true } },
+        attendance: { where: eq(attendanceRecord.date, day), limit: 1 },
       },
     }),
-    prisma.branch.findMany({ where: { companyId: actor.companyId }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    db
+      .select({ id: branchTable.id, name: branchTable.name })
+      .from(branchTable)
+      .where(eq(branchTable.companyId, actor.companyId))
+      .orderBy(asc(branchTable.name)),
   ]);
 
   return (

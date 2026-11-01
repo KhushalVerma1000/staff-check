@@ -1,14 +1,15 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { and, eq, gte, inArray, lte } from 'drizzle-orm';
 import { z } from 'zod';
+import { db, attendanceRecord, company as companyTable, employee, leaveRequest } from '@/db';
 import { done, fail, type ActionResult } from '@/lib/action-result';
 import { audit } from '@/lib/audit';
 import { assertCan, can } from '@/lib/auth/can';
 import { parseDay, toDayKey } from '@/lib/attendance/summary';
 import { firstIssue, optional, text } from '@/lib/form';
 import { leaveDays } from '@/lib/leave/days';
-import { prisma } from '@/lib/prisma';
 import { getActor } from '@/lib/session';
 import { canSeeEmployee, companyIdOf } from '@/lib/tenant/scope';
 import { todayKey } from '@/lib/tenant/time';
@@ -40,7 +41,7 @@ export async function requestLeaveAction(_p: ActionResult | null, fd: FormData):
   if (to < from) return fail('The last day cannot be before the first day.');
   if ((to.getTime() - from.getTime()) / 86_400_000 > 90) return fail('A single request can cover at most 90 days.');
 
-  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { timezone: true } });
+  const [company] = await db.select({ timezone: companyTable.timezone }).from(companyTable).where(eq(companyTable.id, companyId)).limit(1);
   if (parsed.data.from < todayKey(company?.timezone ?? 'UTC') && parsed.data.type !== 'SICK') {
     return fail('Past-dated leave can only be requested as sick leave. Ask HR to record it otherwise.');
   }
@@ -49,20 +50,24 @@ export async function requestLeaveAction(_p: ActionResult | null, fd: FormData):
   const days = leaveDays(from, to, halfDay);
   if (days <= 0) return fail('That range has no working days (Sundays are off).');
 
-  const overlapping = await prisma.leaveRequest.findFirst({
-    where: {
-      employeeId: actor.employeeId,
-      companyId,
-      status: { in: ['PENDING', 'APPROVED'] },
-      fromDate: { lte: to },
-      toDate: { gte: from },
-    },
-    select: { id: true },
-  });
+  const [overlapping] = await db
+    .select({ id: leaveRequest.id })
+    .from(leaveRequest)
+    .where(
+      and(
+        eq(leaveRequest.employeeId, actor.employeeId),
+        eq(leaveRequest.companyId, companyId),
+        inArray(leaveRequest.status, ['PENDING', 'APPROVED']),
+        lte(leaveRequest.fromDate, to),
+        gte(leaveRequest.toDate, from),
+      ),
+    )
+    .limit(1);
   if (overlapping) return fail('You already have leave requested for some of those days.');
 
-  const req = await prisma.leaveRequest.create({
-    data: {
+  const [req] = await db
+    .insert(leaveRequest)
+    .values({
       companyId,
       employeeId: actor.employeeId,
       type: parsed.data.type,
@@ -70,8 +75,8 @@ export async function requestLeaveAction(_p: ActionResult | null, fd: FormData):
       toDate: to,
       days,
       reason: parsed.data.reason,
-    },
-  });
+    })
+    .returning();
   await audit({
     companyId,
     userId: actor.id,
@@ -92,9 +97,20 @@ export async function cancelLeaveAction(formData: FormData): Promise<void> {
   if (!actor.employeeId) return;
   const id = text(formData, 'id');
 
-  const req = await prisma.leaveRequest.findFirst({ where: { id, companyId, employeeId: actor.employeeId, status: 'PENDING' } });
+  const [req] = await db
+    .select({ id: leaveRequest.id })
+    .from(leaveRequest)
+    .where(
+      and(
+        eq(leaveRequest.id, id),
+        eq(leaveRequest.companyId, companyId),
+        eq(leaveRequest.employeeId, actor.employeeId),
+        eq(leaveRequest.status, 'PENDING'),
+      ),
+    )
+    .limit(1);
   if (!req) return;
-  await prisma.leaveRequest.update({ where: { id }, data: { status: 'CANCELLED' } });
+  await db.update(leaveRequest).set({ status: 'CANCELLED' }).where(eq(leaveRequest.id, id));
   await audit({ companyId, userId: actor.id, action: 'leave.cancel', entity: 'LeaveRequest', entityId: id });
   revalidatePath('/leave');
   revalidatePath('/dashboard');
@@ -109,11 +125,17 @@ export async function decideLeaveAction(formData: FormData): Promise<void> {
   const decision = text(formData, 'decision');
   if (decision !== 'APPROVED' && decision !== 'REJECTED') return;
 
-  const req = await prisma.leaveRequest.findFirst({
-    where: { id, companyId, status: 'PENDING' },
-    include: { employee: { select: { id: true, companyId: true, managerId: true } } },
-  });
-  if (!req) return;
+  const [row] = await db
+    .select({
+      req: leaveRequest,
+      emp: { id: employee.id, companyId: employee.companyId, managerId: employee.managerId },
+    })
+    .from(leaveRequest)
+    .innerJoin(employee, eq(employee.id, leaveRequest.employeeId))
+    .where(and(eq(leaveRequest.id, id), eq(leaveRequest.companyId, companyId), eq(leaveRequest.status, 'PENDING')))
+    .limit(1);
+  if (!row) return;
+  const req = { ...row.req, employee: row.emp };
 
   // Managers only decide for their own team; HR / admin for everyone.
   if (!canSeeEmployee(actor, req.employee)) return;
@@ -123,10 +145,10 @@ export async function decideLeaveAction(formData: FormData): Promise<void> {
   if (actor.role === 'MANAGER' && req.employeeId === actor.employeeId) return;
   if (!can(actor, 'leave:decide', { companyId: req.companyId })) return;
 
-  await prisma.leaveRequest.update({
-    where: { id },
-    data: { status: decision, decidedById: actor.id, decidedAt: new Date(), decisionNote: optional(formData, 'note') ?? null },
-  });
+  await db
+    .update(leaveRequest)
+    .set({ status: decision, decidedById: actor.id, decidedAt: new Date(), decisionNote: optional(formData, 'note') ?? null })
+    .where(eq(leaveRequest.id, id));
 
   if (decision === 'APPROVED') {
     // Reflect approved leave on the attendance sheet. Existing PRESENT / HALF_DAY records are left alone.
@@ -136,22 +158,24 @@ export async function decideLeaveAction(formData: FormData): Promise<void> {
     for (let d = new Date(req.fromDate); d <= req.toDate; d = new Date(d.getTime() + 86_400_000)) {
       if (d.getUTCDay() !== 0) days.push(new Date(toDayKey(d)));
     }
-    const existing = await prisma.attendanceRecord.findMany({
-      where: { employeeId: req.employeeId, date: { in: days } },
-      select: { date: true, status: true },
-    });
+    const existing = days.length
+      ? await db
+          .select({ date: attendanceRecord.date, status: attendanceRecord.status })
+          .from(attendanceRecord)
+          .where(and(eq(attendanceRecord.employeeId, req.employeeId), inArray(attendanceRecord.date, days)))
+      : [];
     const keep = new Set(existing.filter((r) => r.status === 'PRESENT' || r.status === 'HALF_DAY').map((r) => toDayKey(r.date)));
-    await prisma.$transaction(
-      days
-        .filter((d) => !keep.has(toDayKey(d)))
-        .map((d) =>
-          prisma.attendanceRecord.upsert({
-            where: { employeeId_date: { employeeId: req.employeeId, date: d } },
-            create: { companyId, employeeId: req.employeeId, date: d, status, source: 'MANUAL', note, markedById: actor.id },
-            update: { status, note, markedById: actor.id },
-          }),
-        ),
-    );
+    await db.transaction(async (tx) => {
+      for (const d of days.filter((d) => !keep.has(toDayKey(d)))) {
+        await tx
+          .insert(attendanceRecord)
+          .values({ companyId, employeeId: req.employeeId, date: d, status, source: 'MANUAL', note, markedById: actor.id })
+          .onConflictDoUpdate({
+            target: [attendanceRecord.employeeId, attendanceRecord.date],
+            set: { status, note, markedById: actor.id },
+          });
+      }
+    });
   }
 
   await audit({

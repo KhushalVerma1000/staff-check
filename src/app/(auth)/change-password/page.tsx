@@ -1,23 +1,23 @@
 import { redirect } from 'next/navigation';
-import { auth } from '@/auth';
 import { ActionForm, Field } from '@/components/action-form';
 import { Input } from '@/components/ui/input';
+import { getSessionUser } from '@/lib/session';
 import { changePasswordAction } from './actions';
 
 export const metadata = { title: 'Change password' };
 
 export default async function ChangePasswordPage() {
-  const session = await auth();
-  if (!session?.user) redirect('/login');
+  const me = await getSessionUser();
+  if (!me) redirect('/login');
   return (
     <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center">
           <h1 className="text-2xl font-semibold text-gray-900">Set a new password</h1>
           <p className="mt-1 text-sm text-gray-500">
-            {session.user.mustChangePassword
+            {me.mustChangePassword
               ? 'Your account uses a one-time password. Choose your own to continue.'
-              : 'Choose a new password. You will be asked to sign in again.'}
+              : 'Choose a new password. Your other devices will be signed out.'}
           </p>
         </div>
         <div className="rounded-xl border bg-white p-6 shadow-sm">

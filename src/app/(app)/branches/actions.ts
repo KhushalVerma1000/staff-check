@@ -1,12 +1,13 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { and, count, eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { db, branch as branchTable } from '@/db';
 import { done, fail, type ActionResult } from '@/lib/action-result';
 import { audit } from '@/lib/audit';
 import { assertCan } from '@/lib/auth/can';
 import { firstIssue, optional, text } from '@/lib/form';
-import { prisma } from '@/lib/prisma';
 import { getActor } from '@/lib/session';
 import { companyIdOf } from '@/lib/tenant/scope';
 
@@ -30,11 +31,18 @@ export async function createBranchAction(_p: ActionResult | null, fd: FormData):
   });
   if (!parsed.success) return fail(firstIssue(parsed.error));
 
-  const exists = await prisma.branch.findFirst({ where: { companyId, name: parsed.data.name }, select: { id: true } });
+  const [exists] = await db
+    .select({ id: branchTable.id })
+    .from(branchTable)
+    .where(and(eq(branchTable.companyId, companyId), eq(branchTable.name, parsed.data.name)))
+    .limit(1);
   if (exists) return fail('A branch with that name already exists.');
 
-  const isFirst = (await prisma.branch.count({ where: { companyId } })) === 0;
-  const branch = await prisma.branch.create({ data: { ...parsed.data, companyId, isHeadOffice: isFirst } });
+  const [{ n }] = await db.select({ n: count() }).from(branchTable).where(eq(branchTable.companyId, companyId));
+  const [branch] = await db
+    .insert(branchTable)
+    .values({ ...parsed.data, companyId, isHeadOffice: n === 0 })
+    .returning();
   await audit({ companyId, userId: actor.id, action: 'branch.create', entity: 'Branch', entityId: branch.id, detail: branch.name });
   revalidatePath('/branches');
   return done(`Added ${branch.name}.`);
@@ -46,9 +54,16 @@ export async function toggleBranchAction(formData: FormData): Promise<void> {
   const companyId = companyIdOf(actor);
   const id = text(formData, 'id');
 
-  const branch = await prisma.branch.findFirst({ where: { id, companyId } });
+  const [branch] = await db
+    .select()
+    .from(branchTable)
+    .where(and(eq(branchTable.id, id), eq(branchTable.companyId, companyId)))
+    .limit(1);
   if (!branch) return;
-  await prisma.branch.update({ where: { id }, data: { active: !branch.active } });
+  await db
+    .update(branchTable)
+    .set({ active: !branch.active })
+    .where(and(eq(branchTable.id, id), eq(branchTable.companyId, companyId)));
   await audit({
     companyId,
     userId: actor.id,

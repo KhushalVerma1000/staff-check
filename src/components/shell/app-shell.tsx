@@ -1,4 +1,6 @@
-import { signOut } from '@/auth';
+import { headers } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { auth } from '@/lib/auth/server';
 import { Button } from '@/components/ui/button';
 import { NavLink } from './nav-link';
 
@@ -26,7 +28,8 @@ export function AppShell({
 }) {
   async function logout() {
     'use server';
-    await signOut({ redirectTo: '/login' });
+    await auth.api.signOut({ headers: await headers() });
+    redirect('/login');
   }
 
   return (

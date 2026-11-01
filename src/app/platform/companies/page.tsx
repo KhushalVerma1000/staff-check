@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { effectiveLimit } from '@/lib/tenant/headcount';
-import { prisma } from '@/lib/prisma';
+import { count, desc, eq, ilike, or } from 'drizzle-orm';
+import { db, company, employee } from '@/db';
 import { requireSuperAdmin } from '@/lib/session';
 
 export const metadata = { title: 'Companies' };
@@ -18,13 +19,18 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
   const term = q?.trim();
 
   const [companies, counts] = await Promise.all([
-    prisma.company.findMany({
-      where: term ? { OR: [{ name: { contains: term, mode: 'insensitive' } }, { slug: { contains: term, mode: 'insensitive' } }] } : {},
-      orderBy: { createdAt: 'desc' },
-    }),
-    prisma.employee.groupBy({ by: ['companyId'], where: { status: 'ACTIVE' }, _count: { _all: true } }),
+    db
+      .select()
+      .from(company)
+      .where(term ? or(ilike(company.name, `%${term}%`), ilike(company.slug, `%${term}%`)) : undefined)
+      .orderBy(desc(company.createdAt)),
+    db
+      .select({ companyId: employee.companyId, n: count() })
+      .from(employee)
+      .where(eq(employee.status, 'ACTIVE'))
+      .groupBy(employee.companyId),
   ]);
-  const active = new Map(counts.map((c) => [c.companyId, c._count._all]));
+  const active = new Map(counts.map((c) => [c.companyId, c.n]));
 
   return (
     <>

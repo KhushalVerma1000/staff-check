@@ -1,7 +1,9 @@
 'use server';
 
-import { AuthError } from 'next-auth';
-import { signIn } from '@/auth';
+import { headers } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { APIError } from 'better-auth/api';
+import { auth } from '@/lib/auth/server';
 import { fail, type ActionResult } from '@/lib/action-result';
 
 export async function loginAction(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
@@ -14,13 +16,13 @@ export async function loginAction(_prev: ActionResult | null, formData: FormData
   const redirectTo = from.startsWith('/') && !from.startsWith('//') ? from : '/';
 
   try {
-    await signIn('credentials', { email, password, redirectTo });
+    await auth.api.signInEmail({ body: { email, password }, headers: await headers() });
   } catch (e) {
-    if (e instanceof AuthError) {
+    if (e instanceof APIError) {
       // One message for every failure: unknown email, wrong password, removed login, suspended company.
       return fail('Wrong email or password, or this account is not active.');
     }
-    throw e; // the redirect on success is thrown by signIn and must propagate
+    throw e;
   }
-  return { ok: true };
+  redirect(redirectTo);
 }

@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { and, count as sqlCount, eq, ne } from 'drizzle-orm';
+import { db, attendanceRecord, company as companyTable, employee, leaveRequest } from '@/db';
 import { CheckInWidget } from '@/components/check-in-widget';
 import { PageHeader } from '@/components/shell/app-shell';
 import { Button } from '@/components/ui/button';
@@ -6,10 +8,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { parseDay } from '@/lib/attendance/summary';
 import { can } from '@/lib/auth/can';
 import { fmtTime } from '@/lib/labels';
-import { prisma } from '@/lib/prisma';
 import { requireCompanyActor } from '@/lib/session';
 import { headcount } from '@/lib/tenant/headcount';
-import { employeeScope } from '@/lib/tenant/scope';
+import { employeeFilter } from '@/lib/tenant/sql';
 import { todayKey } from '@/lib/tenant/time';
 import { selfCheckAction } from '../attendance/actions';
 
@@ -17,48 +18,72 @@ export const metadata = { title: 'Dashboard' };
 
 export default async function DashboardPage() {
   const actor = await requireCompanyActor();
-  const company = await prisma.company.findUnique({
-    where: { id: actor.companyId },
-    select: { timezone: true, name: true },
-  });
+  const [company] = await db
+    .select({ timezone: companyTable.timezone, name: companyTable.name })
+    .from(companyTable)
+    .where(eq(companyTable.id, actor.companyId))
+    .limit(1);
   const tz = company?.timezone ?? 'UTC';
   const day = parseDay(todayKey(tz))!;
-  const scope = employeeScope(actor);
+  const scope = employeeFilter(actor);
 
   const [hc, todayRows, onLeaveToday, pendingLeave, mine, me] = await Promise.all([
     headcount(actor.companyId),
-    prisma.attendanceRecord.groupBy({
-      by: ['status'],
-      where: { companyId: actor.companyId, date: day, employee: { AND: [scope, { status: 'ACTIVE' }] } },
-      _count: { _all: true },
-    }),
-    prisma.attendanceRecord.findMany({
-      where: { companyId: actor.companyId, date: day, status: 'ON_LEAVE', employee: scope },
-      select: { employee: { select: { name: true } } },
-      take: 8,
-    }),
+    db
+      .select({ status: attendanceRecord.status, n: sqlCount() })
+      .from(attendanceRecord)
+      .innerJoin(employee, eq(employee.id, attendanceRecord.employeeId))
+      .where(
+        and(eq(attendanceRecord.companyId, actor.companyId), eq(attendanceRecord.date, day), scope, eq(employee.status, 'ACTIVE')),
+      )
+      .groupBy(attendanceRecord.status)
+      .then((rows) => rows.map((r) => ({ status: r.status as string, _count: { _all: r.n } }))),
+    db
+      .select({ name: employee.name })
+      .from(attendanceRecord)
+      .innerJoin(employee, eq(employee.id, attendanceRecord.employeeId))
+      .where(
+        and(eq(attendanceRecord.companyId, actor.companyId), eq(attendanceRecord.date, day), eq(attendanceRecord.status, 'ON_LEAVE'), scope),
+      )
+      .limit(8)
+      .then((rows) => rows.map((r) => ({ employee: { name: r.name } }))),
     can(actor, 'leave:decide')
-      ? prisma.leaveRequest.count({
-          where: {
-            companyId: actor.companyId,
-            status: 'PENDING',
-            employee: scope,
-            ...(actor.role === 'MANAGER' && actor.employeeId ? { NOT: { employeeId: actor.employeeId } } : {}),
-          },
-        })
+      ? db
+          .select({ n: sqlCount() })
+          .from(leaveRequest)
+          .innerJoin(employee, eq(employee.id, leaveRequest.employeeId))
+          .where(
+            and(
+              eq(leaveRequest.companyId, actor.companyId),
+              eq(leaveRequest.status, 'PENDING'),
+              scope,
+              actor.role === 'MANAGER' && actor.employeeId ? ne(leaveRequest.employeeId, actor.employeeId) : undefined,
+            ),
+          )
+          .then((r) => r[0]?.n ?? 0)
       : Promise.resolve(0),
     actor.employeeId
-      ? prisma.attendanceRecord.findUnique({ where: { employeeId_date: { employeeId: actor.employeeId, date: day } } })
+      ? db
+          .select()
+          .from(attendanceRecord)
+          .where(and(eq(attendanceRecord.employeeId, actor.employeeId), eq(attendanceRecord.date, day)))
+          .limit(1)
+          .then((r) => r[0] ?? null)
       : Promise.resolve(null),
     actor.employeeId
-      ? prisma.employee.findFirst({ where: { id: actor.employeeId, companyId: actor.companyId }, select: { workType: true } })
+      ? db
+          .select({ workType: employee.workType })
+          .from(employee)
+          .where(and(eq(employee.id, actor.employeeId), eq(employee.companyId, actor.companyId)))
+          .limit(1)
+          .then((r) => r[0] ?? null)
       : Promise.resolve(null),
   ]);
 
   const count = (s: string) => todayRows.find((r) => r.status === s)?._count._all ?? 0;
   const team =
     actor.role === 'MANAGER'
-      ? await prisma.employee.count({ where: { AND: [scope, { status: 'ACTIVE' }] } })
+      ? ((await db.select({ n: sqlCount() }).from(employee).where(and(scope, eq(employee.status, 'ACTIVE'))))[0]?.n ?? 0)
       : hc.active;
   const marked = todayRows.reduce((n, r) => n + r._count._all, 0);
 

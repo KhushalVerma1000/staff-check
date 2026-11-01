@@ -3,7 +3,8 @@ import { PageHeader } from '@/components/shell/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { prisma } from '@/lib/prisma';
+import { asc, eq } from 'drizzle-orm';
+import { db, department } from '@/db';
 import { requireCompanyActor } from '@/lib/session';
 import { createDepartmentAction, deleteDepartmentAction } from './actions';
 
@@ -11,11 +12,12 @@ export const metadata = { title: 'Departments' };
 
 export default async function DepartmentsPage() {
   const actor = await requireCompanyActor('department:manage');
-  const departments = await prisma.department.findMany({
-    where: { companyId: actor.companyId },
-    orderBy: { name: 'asc' },
-    include: { _count: { select: { employees: true } } },
+  const rows = await db.query.department.findMany({
+    where: eq(department.companyId, actor.companyId),
+    orderBy: asc(department.name),
+    with: { employees: { columns: { id: true } } },
   });
+  const departments = rows.map((d) => ({ ...d, _count: { employees: d.employees.length } }));
 
   return (
     <>

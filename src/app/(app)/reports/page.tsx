@@ -1,10 +1,11 @@
 import Link from 'next/link';
+import { eq } from 'drizzle-orm';
+import { db, company as companyTable } from '@/db';
 import { PageHeader } from '@/components/shell/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { isMonthKey, loadMonthlyReport } from '@/lib/reports';
-import { prisma } from '@/lib/prisma';
 import { requireCompanyActor } from '@/lib/session';
 import { monthOf, todayKey } from '@/lib/tenant/time';
 
@@ -13,7 +14,7 @@ export const metadata = { title: 'Reports' };
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<{ month?: string }> }) {
   const actor = await requireCompanyActor('reports:view');
   const sp = await searchParams;
-  const company = await prisma.company.findUnique({ where: { id: actor.companyId }, select: { timezone: true } });
+  const [company] = await db.select({ timezone: companyTable.timezone }).from(companyTable).where(eq(companyTable.id, actor.companyId)).limit(1);
   const month = isMonthKey(sp.month) ? sp.month : monthOf(todayKey(company?.timezone ?? 'UTC'));
   const report = await loadMonthlyReport(actor, month);
 

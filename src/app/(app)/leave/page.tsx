@@ -1,3 +1,4 @@
+import { and, asc, desc, eq, ne } from 'drizzle-orm';
 import { ActionForm, Field } from '@/components/action-form';
 import { PageHeader } from '@/components/shell/app-shell';
 import { Badge } from '@/components/ui/badge';
@@ -8,9 +9,9 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
 import { can } from '@/lib/auth/can';
 import { fmtDate, LEAVE_TYPE_LABEL } from '@/lib/labels';
-import { prisma } from '@/lib/prisma';
+import { db, employee, leaveRequest } from '@/db';
 import { requireCompanyActor } from '@/lib/session';
-import { employeeScope } from '@/lib/tenant/scope';
+import { employeeFilter } from '@/lib/tenant/sql';
 import { cancelLeaveAction, decideLeaveAction, requestLeaveAction } from './actions';
 
 export const metadata = { title: 'Leave' };
@@ -23,24 +24,29 @@ export default async function LeavePage() {
 
   const [pending, mine] = await Promise.all([
     canDecide
-      ? prisma.leaveRequest.findMany({
-          where: {
-            companyId: actor.companyId,
-            status: 'PENDING',
-            employee: employeeScope(actor),
-            // Managers don't see (or decide) their own request in the queue.
-            ...(actor.role === 'MANAGER' && actor.employeeId ? { NOT: { employeeId: actor.employeeId } } : {}),
-          },
-          orderBy: { fromDate: 'asc' },
-          include: { employee: { select: { name: true, code: true } } },
-        })
+      ? db
+          .select({ req: leaveRequest, employee: { name: employee.name, code: employee.code } })
+          .from(leaveRequest)
+          .innerJoin(employee, eq(employee.id, leaveRequest.employeeId))
+          .where(
+            and(
+              eq(leaveRequest.companyId, actor.companyId),
+              eq(leaveRequest.status, 'PENDING'),
+              employeeFilter(actor),
+              // Managers don't see (or decide) their own request in the queue.
+              actor.role === 'MANAGER' && actor.employeeId ? ne(leaveRequest.employeeId, actor.employeeId) : undefined,
+            ),
+          )
+          .orderBy(asc(leaveRequest.fromDate))
+          .then((rows) => rows.map((r) => ({ ...r.req, employee: r.employee })))
       : Promise.resolve([]),
     actor.employeeId
-      ? prisma.leaveRequest.findMany({
-          where: { companyId: actor.companyId, employeeId: actor.employeeId },
-          orderBy: { createdAt: 'desc' },
-          take: 20,
-        })
+      ? db
+          .select()
+          .from(leaveRequest)
+          .where(and(eq(leaveRequest.companyId, actor.companyId), eq(leaveRequest.employeeId, actor.employeeId)))
+          .orderBy(desc(leaveRequest.createdAt))
+          .limit(20)
       : Promise.resolve([]),
   ]);
 
