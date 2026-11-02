@@ -8,7 +8,7 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { asc, desc, eq } from 'drizzle-orm';
 import { db, branch, employee } from '@/db';
 import { requireCompanyActor } from '@/lib/session';
-import { createBranchAction, toggleBranchAction } from './actions';
+import { createBranchAction, toggleBranchAction, updateGeofenceAction } from './actions';
 
 export const metadata = { title: 'Branches' };
 
@@ -47,6 +47,7 @@ export default async function BranchesPage() {
                       <p className="text-sm text-gray-500">
                         {b.type === 'OFFICE' ? 'Office' : 'Field'}
                         {b.city ? ` · ${b.city}` : ''} · {b._count.employees} active staff
+                        {b.radiusM ? ` · geofence ${b.radiusM} m` : ' · no geofence'}
                       </p>
                     </div>
                     <form action={toggleBranchAction}>
@@ -55,6 +56,19 @@ export default async function BranchesPage() {
                         {b.active ? 'Deactivate' : 'Reactivate'}
                       </Button>
                     </form>
+                    <details className="w-full text-sm">
+                      <summary className="cursor-pointer text-gray-600">Geofence</summary>
+                      <div className="mt-2 max-w-md">
+                        <ActionForm action={updateGeofenceAction} submitLabel="Save geofence">
+                          <input type="hidden" name="id" value={b.id} />
+                          <div className="grid grid-cols-3 gap-2">
+                            <Input name="latitude" inputMode="decimal" defaultValue={b.latitude ?? ''} placeholder="Latitude" aria-label={`Latitude for ${b.name}`} />
+                            <Input name="longitude" inputMode="decimal" defaultValue={b.longitude ?? ''} placeholder="Longitude" aria-label={`Longitude for ${b.name}`} />
+                            <Input name="radiusM" inputMode="numeric" defaultValue={b.radiusM ?? ''} placeholder="Radius (m)" aria-label={`Radius in metres for ${b.name}`} />
+                          </div>
+                        </ActionForm>
+                      </div>
+                    </details>
                   </li>
                 ))}
               </ul>
@@ -81,6 +95,13 @@ export default async function BranchesPage() {
               </Field>
               <Field label="Address" htmlFor="address">
                 <Input id="address" name="address" />
+              </Field>
+              <Field label="Check-in geofence" htmlFor="latitude" hint="Optional. Staff can only check in within this radius. Leave all three empty for no geofence.">
+                <div className="grid grid-cols-3 gap-2">
+                  <Input id="latitude" name="latitude" inputMode="decimal" placeholder="Latitude" aria-label="Latitude" />
+                  <Input name="longitude" inputMode="decimal" placeholder="Longitude" aria-label="Longitude" />
+                  <Input name="radiusM" inputMode="numeric" placeholder="Radius (m)" aria-label="Radius in metres" />
+                </div>
               </Field>
             </ActionForm>
           </CardContent>

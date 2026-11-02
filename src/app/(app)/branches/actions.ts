@@ -8,6 +8,7 @@ import { done, fail, type ActionResult } from '@/lib/action-result';
 import { audit } from '@/lib/audit';
 import { assertCan } from '@/lib/auth/can';
 import { firstIssue, optional, text } from '@/lib/form';
+import { parseGeofence } from '@/lib/geo';
 import { getActor } from '@/lib/session';
 import { companyIdOf } from '@/lib/tenant/scope';
 
@@ -30,6 +31,8 @@ export async function createBranchAction(_p: ActionResult | null, fd: FormData):
     address: optional(fd, 'address'),
   });
   if (!parsed.success) return fail(firstIssue(parsed.error));
+  const fence = parseGeofence({ lat: optional(fd, 'latitude'), lng: optional(fd, 'longitude'), radiusM: optional(fd, 'radiusM') });
+  if (!fence.ok) return fail(fence.error);
 
   const [exists] = await db
     .select({ id: branchTable.id })
@@ -41,7 +44,14 @@ export async function createBranchAction(_p: ActionResult | null, fd: FormData):
   const [{ n }] = await db.select({ n: count() }).from(branchTable).where(eq(branchTable.companyId, companyId));
   const [branch] = await db
     .insert(branchTable)
-    .values({ ...parsed.data, companyId, isHeadOffice: n === 0 })
+    .values({
+      ...parsed.data,
+      companyId,
+      isHeadOffice: n === 0,
+      latitude: fence.fence?.lat ?? null,
+      longitude: fence.fence?.lng ?? null,
+      radiusM: fence.fence?.radiusM ?? null,
+    })
     .returning();
   await audit({ companyId, userId: actor.id, action: 'branch.create', entity: 'Branch', entityId: branch.id, detail: branch.name });
   revalidatePath('/branches');
@@ -73,4 +83,32 @@ export async function toggleBranchAction(formData: FormData): Promise<void> {
     detail: branch.name,
   });
   revalidatePath('/branches');
+}
+
+/** Set or clear a branch's check-in geofence. */
+export async function updateGeofenceAction(_p: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  const actor = await getActor();
+  assertCan(actor, 'branch:manage', { companyId: actor?.companyId });
+  const companyId = companyIdOf(actor);
+  const id = text(fd, 'id');
+
+  const fence = parseGeofence({ lat: optional(fd, 'latitude'), lng: optional(fd, 'longitude'), radiusM: optional(fd, 'radiusM') });
+  if (!fence.ok) return fail(fence.error);
+
+  const updated = await db
+    .update(branchTable)
+    .set({ latitude: fence.fence?.lat ?? null, longitude: fence.fence?.lng ?? null, radiusM: fence.fence?.radiusM ?? null })
+    .where(and(eq(branchTable.id, id), eq(branchTable.companyId, companyId)))
+    .returning({ name: branchTable.name });
+  if (updated.length === 0) return fail('Branch not found.');
+  await audit({
+    companyId,
+    userId: actor.id,
+    action: 'branch.geofence',
+    entity: 'Branch',
+    entityId: id,
+    detail: fence.fence ? `${updated[0].name}: ${fence.fence.lat}, ${fence.fence.lng} r=${fence.fence.radiusM}m` : `${updated[0].name}: geofence cleared`,
+  });
+  revalidatePath('/branches');
+  return done(fence.fence ? 'Geofence saved.' : 'Geofence cleared.');
 }

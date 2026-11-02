@@ -57,6 +57,10 @@ export const branch = pgTable(
     address: text('address'),
     city: text('city'),
     isHeadOffice: boolean('is_head_office').notNull().default(false),
+    /** Geofence for check-in: centre point and radius in metres. All three set, or none. */
+    latitude: doublePrecision('latitude'),
+    longitude: doublePrecision('longitude'),
+    radiusM: integer('radius_m'),
     active: boolean('active').notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

@@ -63,3 +63,15 @@ test('one attendance row per employee per day', async () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].status, 'HALF_DAY');
 });
+
+test('branch geofence columns round-trip and are optional', async () => {
+  const db = await fresh();
+  const [a] = await db.insert(s.company).values({ name: 'A', slug: 'a' }).returning();
+  const [plain] = await db.insert(s.branch).values({ companyId: a.id, name: 'Plain' }).returning();
+  const [fenced] = await db
+    .insert(s.branch)
+    .values({ companyId: a.id, name: 'Fenced', latitude: 18.52, longitude: 73.85, radiusM: 150 })
+    .returning();
+  assert.equal(plain.radiusM, null);
+  assert.deepEqual([fenced.latitude, fenced.longitude, fenced.radiusM], [18.52, 73.85, 150]);
+});

@@ -94,6 +94,9 @@ export default async function UsersPage() {
                 {u.id !== actor.id && (
                   <ActionForm action={resetPasswordAction} submitLabel="Reset password" variant="outline" className="space-y-2">
                     <input type="hidden" name="id" value={u.id} />
+                    <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" name="sendEmail" defaultChecked className="h-4 w-4" /> Email the login details
+              </label>
                   </ActionForm>
                 )}
               </CardContent>
@@ -131,6 +134,9 @@ export default async function UsersPage() {
                   ))}
                 </NativeSelect>
               </Field>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" name="sendEmail" defaultChecked className="h-4 w-4" /> Email the login details
+              </label>
             </ActionForm>
           </CardContent>
         </Card>

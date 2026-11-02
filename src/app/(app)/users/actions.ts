@@ -3,15 +3,26 @@
 import { revalidatePath } from 'next/cache';
 import { and, count, eq, isNull, notExists } from 'drizzle-orm';
 import { z } from 'zod';
-import { db, employee, user as userTable } from '@/db';
+import { db, company as companyTable, employee, user as userTable } from '@/db';
 import { done, fail, type ActionResult } from '@/lib/action-result';
 import { audit } from '@/lib/audit';
 import { assertCan, COMPANY_ROLES } from '@/lib/auth/can';
 import { createLogin, resetLoginPassword, revokeSessions } from '@/lib/auth/users';
 import { firstIssue, optional, text } from '@/lib/form';
+import { env } from '@/lib/env';
+import { sendMail } from '@/lib/mail';
+import { loginEmail } from '@/lib/mail/templates';
 import { generateTempPassword } from '@/lib/password';
 import { getActor } from '@/lib/session';
 import { companyIdOf } from '@/lib/tenant/scope';
+
+/** Email the one-time password when the form's "Email the login details" box is ticked. Never throws. */
+async function maybeEmailLogin(fd: FormData, companyId: string, p: { to: string; name: string; tempPassword: string; reset?: boolean }): Promise<string> {
+  if (fd.get('sendEmail') !== 'on') return '';
+  const [co] = await db.select({ name: companyTable.name }).from(companyTable).where(eq(companyTable.id, companyId)).limit(1);
+  const res = await sendMail(loginEmail({ ...p, companyName: co?.name ?? 'your company', appUrl: env().BETTER_AUTH_URL }));
+  return res.ok ? ` Login details emailed to ${p.to}.` : ` Could not email the details (${res.error}) — share the password another way.`;
+}
 
 const createSchema = z.object({
   name: z.string().min(2, 'Enter the name.').max(100),
@@ -60,8 +71,9 @@ export async function createUserAction(_p: ActionResult | null, fd: FormData): P
     mustChangePassword: true,
   });
   await audit({ companyId, userId: actor.id, action: 'user.create', entity: 'User', entityId: user.id, detail: `${user.email} (${user.role})` });
+  const emailed = await maybeEmailLogin(fd, companyId, { to: user.email, name: user.name, tempPassword: temp });
   revalidatePath('/users');
-  return done(`Login created for ${user.email}. One-time password: ${temp} — share it securely; it is shown only once.`);
+  return done(`Login created for ${user.email}. One-time password: ${temp} — shown only once.${emailed}`);
 }
 
 export async function resetPasswordAction(_p: ActionResult | null, fd: FormData): Promise<ActionResult> {
@@ -80,7 +92,8 @@ export async function resetPasswordAction(_p: ActionResult | null, fd: FormData)
   const temp = generateTempPassword();
   await resetLoginPassword(id, temp, true);
   await audit({ companyId, userId: actor.id, action: 'user.resetPassword', entity: 'User', entityId: id, detail: user.email });
-  return done(`New one-time password for ${user.email}: ${temp} — shown only once.`);
+  const emailed = await maybeEmailLogin(fd, companyId, { to: user.email, name: user.name, tempPassword: temp, reset: true });
+  return done(`New one-time password for ${user.email}: ${temp} — shown only once.${emailed}`);
 }
 
 export async function changeRoleAction(formData: FormData): Promise<void> {
