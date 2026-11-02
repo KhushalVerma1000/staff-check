@@ -27,7 +27,10 @@ export type Action =
   | 'reports:view'
   | 'user:manage'
   | 'auditLog:view'
-  | 'company:settings';
+  | 'company:settings'
+  // Onboarding: any company login linked to a staff record fills its own details; admin / HR review them.
+  | 'onboarding:self'
+  | 'onboarding:review';
 
 const ALL_COMPANY_ACTIONS: readonly Action[] = [
   'employee:view',
@@ -46,6 +49,8 @@ const ALL_COMPANY_ACTIONS: readonly Action[] = [
   'user:manage',
   'auditLog:view',
   'company:settings',
+  'onboarding:self',
+  'onboarding:review',
 ];
 
 /**
@@ -70,8 +75,10 @@ const MATRIX: Record<Role, readonly Action[]> = {
     'leave:view',
     'leave:decide',
     'reports:view',
+    'onboarding:self',
+    'onboarding:review',
   ],
-  ACCOUNTANT: ['employee:view', 'attendance:view', 'attendance:selfCheckIn', 'leave:request', 'leave:view', 'reports:view'],
+  ACCOUNTANT: ['employee:view', 'attendance:view', 'attendance:selfCheckIn', 'leave:request', 'leave:view', 'reports:view', 'onboarding:self'],
   MANAGER: [
     'employee:view',
     'attendance:view',
@@ -81,6 +88,7 @@ const MATRIX: Record<Role, readonly Action[]> = {
     'leave:view',
     'leave:decide',
     'reports:view',
+    'onboarding:self',
   ],
 };
 

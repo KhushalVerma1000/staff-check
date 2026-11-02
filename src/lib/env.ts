@@ -11,6 +11,8 @@ const schema = z.object({
   DB_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
   BETTER_AUTH_SECRET: z.string().min(32, 'BETTER_AUTH_SECRET must be at least 32 characters (openssl rand -base64 32).'),
   BETTER_AUTH_URL: z.string().url().default('http://localhost:3000'),
+  /** 32 random bytes, base64 (openssl rand -base64 32). Encrypts ID, statutory and bank numbers. */
+  KYC_ENCRYPTION_KEY: z.string().optional(),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 });
 

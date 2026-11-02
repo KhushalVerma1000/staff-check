@@ -15,6 +15,13 @@
       "when": 1793618739091,
       "tag": "0001_branch_geofence",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793622635373,
+      "tag": "0002_employee_kyc",
+      "breakpoints": true
     }
   ]
 }

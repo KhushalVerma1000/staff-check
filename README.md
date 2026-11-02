@@ -47,6 +47,7 @@ Sign in as the super admin, add a client company, and share the one-time admin p
 - **Better Auth** (`src/lib/auth/server.ts`): email + password, database-backed cookie sessions, public sign-up off. Logins are created with `createLogin` (`src/lib/auth/users.ts`). Removing a login or suspending a company revokes live sessions. `src/lib/session.ts` re-reads the user on every request and enforces the one-time-password change.
 - **Tenant scoping**: start every tenant query with `inCompany(table, companyId)` / `employeeFilter(actor)` (`src/lib/tenant/sql.ts`).
 - **Data layer skeleton** (`src/lib/data`): circuit breaker, tenant placement, Cloudinary account choice and outbox replay, the pieces of the balancer in the spec. MongoDB and Cloudinary clients arrive with the attendance phase.
+- **Onboarding** (`/onboarding`, `/onboarding/review`): a 5-step details wizard for any login linked to a staff record, with HR / admin review. Aadhaar, PAN, UAN, ESIC and bank account numbers are AES-256-GCM encrypted (`src/lib/crypto.ts`, key in `KYC_ENCRYPTION_KEY`) and shown only as the last 4 digits. Document uploads arrive with Cloudinary.
 - Needs Node 20.9+.
 
 ## Layout

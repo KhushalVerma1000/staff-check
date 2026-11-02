@@ -69,3 +69,13 @@ test('manager can mark attendance and decide leave but not edit staff', () => {
   assert.equal(can(m, 'employee:edit'), false);
   assert.equal(can(m, 'branch:manage'), false);
 });
+
+test('onboarding: every company role fills its own; only admin and HR review', () => {
+  for (const r of ['ADMIN', 'HR', 'ACCOUNTANT', 'MANAGER'] as const) assert.equal(can(actor(r), 'onboarding:self'), true, r);
+  assert.equal(can(actor('ADMIN'), 'onboarding:review'), true);
+  assert.equal(can(actor('HR'), 'onboarding:review'), true);
+  assert.equal(can(actor('ACCOUNTANT'), 'onboarding:review'), false);
+  assert.equal(can(actor('MANAGER'), 'onboarding:review'), false);
+  assert.equal(can(actor('SUPER_ADMIN', null, null), 'onboarding:self'), false);
+  assert.equal(can(actor('HR'), 'onboarding:review', { companyId: 'other' }), false);
+});

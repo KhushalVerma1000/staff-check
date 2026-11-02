@@ -1,6 +1,6 @@
 import { relations } from 'drizzle-orm';
 import { user, session, account } from './auth';
-import { attendanceRecord, auditLog, branch, company, department, employee, leaveRequest } from './app';
+import { employeeKyc, attendanceRecord, auditLog, branch, company, department, employee, leaveRequest } from './app';
 
 export const companyRelations = relations(company, ({ many }) => ({
   branches: many(branch),
@@ -29,6 +29,7 @@ export const employeeRelations = relations(employee, ({ one, many }) => ({
   manager: one(employee, { fields: [employee.managerId], references: [employee.id], relationName: 'reports' }),
   reports: many(employee, { relationName: 'reports' }),
   user: one(user),
+  kyc: one(employeeKyc),
   attendance: many(attendanceRecord),
   leaves: many(leaveRequest),
 }));
@@ -54,4 +55,8 @@ export const leaveRelations = relations(leaveRequest, ({ one }) => ({
 
 export const auditRelations = relations(auditLog, ({ one }) => ({
   company: one(company, { fields: [auditLog.companyId], references: [company.id] }),
+}));
+
+export const kycRelations = relations(employeeKyc, ({ one }) => ({
+  employee: one(employee, { fields: [employeeKyc.employeeId], references: [employee.id] }),
 }));

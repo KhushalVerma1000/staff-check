@@ -11,6 +11,12 @@ export const attendanceSourceEnum = pgEnum('attendance_source', ['MANUAL', 'SELF
 export const leaveTypeEnum = pgEnum('leave_type', ['CASUAL', 'SICK', 'PAID', 'UNPAID']);
 export const leaveStatusEnum = pgEnum('leave_status', ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']);
 
+export const onboardingStatusEnum = pgEnum('onboarding_status', ['IN_PROGRESS', 'SUBMITTED', 'APPROVED', 'CHANGES_REQUESTED']);
+/** Why an employee left an ID / statutory field empty (design: "Skip this for now"). */
+export const skipReasonEnum = pgEnum('skip_reason', ['NOT_YET', 'NOT_APPLICABLE', 'WILL_BRING_DOC']);
+export type OnboardingStatus = (typeof onboardingStatusEnum.enumValues)[number];
+export type SkipReason = (typeof skipReasonEnum.enumValues)[number];
+
 export type CompanyStatus = (typeof companyStatusEnum.enumValues)[number];
 export type Plan = (typeof planEnum.enumValues)[number];
 export type BranchType = (typeof branchTypeEnum.enumValues)[number];
@@ -171,4 +177,46 @@ export const auditLog = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index('audit_company_created_idx').on(t.companyId, t.createdAt), index('audit_created_idx').on(t.createdAt)],
+);
+
+/**
+ * An employee's onboarding details. ID, statutory and bank numbers are stored
+ * encrypted (AES-256-GCM, see src/lib/crypto.ts); only masked forms are ever shown to HR.
+ */
+export const employeeKyc = pgTable(
+  'employee_kyc',
+  {
+    id: text('id').primaryKey().$defaultFn(newId),
+    companyId: text('company_id').notNull().references(() => company.id, { onDelete: 'cascade' }),
+    employeeId: text('employee_id').notNull().unique().references(() => employee.id, { onDelete: 'cascade' }),
+    status: onboardingStatusEnum('status').notNull().default('IN_PROGRESS'),
+    /** Last wizard step reached (1-5). */
+    step: integer('step').notNull().default(1),
+    dob: date('dob', { mode: 'date' }),
+    aadhaarEnc: text('aadhaar_enc'),
+    aadhaarSkip: skipReasonEnum('aadhaar_skip'),
+    panEnc: text('pan_enc'),
+    panSkip: skipReasonEnum('pan_skip'),
+    uanEnc: text('uan_enc'),
+    uanSkip: skipReasonEnum('uan_skip'),
+    esicEnc: text('esic_enc'),
+    esicSkip: skipReasonEnum('esic_skip'),
+    bankHolder: text('bank_holder'),
+    bankName: text('bank_name'),
+    accountEnc: text('account_enc'),
+    ifsc: text('ifsc'),
+    bankSkip: skipReasonEnum('bank_skip'),
+    addrLine1: text('addr_line1'),
+    addrLine2: text('addr_line2'),
+    city: text('city'),
+    state: text('state'),
+    pincode: text('pincode'),
+    submittedAt: ts('submitted_at'),
+    reviewedById: text('reviewed_by_id'),
+    reviewedAt: ts('reviewed_at'),
+    reviewNote: text('review_note'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('kyc_company_status_idx').on(t.companyId, t.status)],
 );
