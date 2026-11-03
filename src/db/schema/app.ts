@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { date, doublePrecision, index, integer, pgEnum, pgTable, text, timestamp, boolean, uniqueIndex } from 'drizzle-orm/pg-core';
 import { newId } from './ids';
 
@@ -21,6 +22,9 @@ export type SkipReason = (typeof skipReasonEnum.enumValues)[number];
 export const punchOutcomeEnum = pgEnum('punch_outcome', ['OK', 'OUTSIDE_GEOFENCE', 'NO_LOCATION', 'POOR_ACCURACY']);
 export const punchKindEnum = pgEnum('punch_kind', ['IN', 'OUT']);
 export type PunchOutcome = (typeof punchOutcomeEnum.enumValues)[number];
+
+export const correctionStatusEnum = pgEnum('correction_status', ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']);
+export type CorrectionRequestStatus = (typeof correctionStatusEnum.enumValues)[number];
 
 export type CompanyStatus = (typeof companyStatusEnum.enumValues)[number];
 export type Plan = (typeof planEnum.enumValues)[number];
@@ -248,4 +252,31 @@ export const punchEvent = pgTable(
     distanceM: doublePrecision('distance_m'),
   },
   (t) => [index('punch_company_ts_idx').on(t.companyId, t.ts), index('punch_employee_ts_idx').on(t.employeeId, t.ts)],
+);
+
+/** An employee's request to fix a day's attendance; approving it rewrites that day's attendance_record. */
+export const attendanceCorrection = pgTable(
+  'attendance_correction',
+  {
+    id: text('id').primaryKey().$defaultFn(newId),
+    companyId: text('company_id').notNull().references(() => company.id, { onDelete: 'cascade' }),
+    employeeId: text('employee_id').notNull().references(() => employee.id, { onDelete: 'cascade' }),
+    date: date('date', { mode: 'date' }).notNull(),
+    requestedStatus: attendanceStatusEnum('requested_status').notNull(),
+    requestedCheckIn: ts('requested_check_in'),
+    requestedCheckOut: ts('requested_check_out'),
+    reason: text('reason').notNull(),
+    status: correctionStatusEnum('status').notNull().default('PENDING'),
+    decidedById: text('decided_by_id'),
+    decidedAt: ts('decided_at'),
+    decisionNote: text('decision_note'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('correction_company_status_idx').on(t.companyId, t.status),
+    index('correction_employee_idx').on(t.employeeId),
+    // At most one open request per person per day.
+    uniqueIndex('correction_one_pending_uq').on(t.employeeId, t.date).where(sql`${t.status} = 'PENDING'`),
+  ],
 );

@@ -29,6 +29,13 @@
       "when": 1793704456714,
       "tag": "0003_punch_event",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793704733334,
+      "tag": "0004_attendance_correction",
+      "breakpoints": true
     }
   ]
 }

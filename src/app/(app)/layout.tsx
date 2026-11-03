@@ -12,6 +12,7 @@ export default async function CompanyLayout({ children }: { children: React.Reac
   const nav: NavItem[] = [{ href: '/dashboard', label: 'Dashboard', exact: true }];
   if (can(actor, 'employee:view')) nav.push({ href: '/employees', label: actor.role === 'MANAGER' ? 'My team' : 'Employees' });
   if (can(actor, 'attendance:view')) nav.push({ href: '/attendance', label: 'Attendance' });
+  if (can(actor, 'attendance:selfCheckIn') && actor.employeeId) nav.push({ href: '/attendance/corrections', label: 'Corrections' });
   if (can(actor, 'leave:view')) nav.push({ href: '/leave', label: 'Leave' });
   if (can(actor, 'branch:manage')) nav.push({ href: '/branches', label: 'Branches' });
   if (can(actor, 'department:manage')) nav.push({ href: '/departments', label: 'Departments' });

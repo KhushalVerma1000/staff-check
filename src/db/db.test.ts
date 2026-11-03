@@ -86,3 +86,14 @@ test('punch events record refused attempts without touching attendance', async (
   assert.equal(punches[0].outcome, 'OUTSIDE_GEOFENCE');
   assert.equal((await db.select().from(s.attendanceRecord)).length, 0);
 });
+
+test('only one pending correction per person per day; a decided one frees the slot', async () => {
+  const db = await fresh();
+  const [a] = await db.insert(s.company).values({ name: 'A', slug: 'a' }).returning();
+  const [e] = await db.insert(s.employee).values({ companyId: a.id, code: 'E-1', name: 'x', joinedOn: new Date('2026-01-01') }).returning();
+  const row = { companyId: a.id, employeeId: e.id, date: new Date('2026-10-05'), requestedStatus: 'PRESENT' as const, reason: 'forgot to check in' };
+  const [first] = await db.insert(s.attendanceCorrection).values(row).returning();
+  await assert.rejects(db.insert(s.attendanceCorrection).values(row));
+  await db.update(s.attendanceCorrection).set({ status: 'REJECTED' }).where(eq(s.attendanceCorrection.id, first.id));
+  await db.insert(s.attendanceCorrection).values(row); // a new request is allowed again
+});
