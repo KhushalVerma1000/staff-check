@@ -17,6 +17,11 @@ export const skipReasonEnum = pgEnum('skip_reason', ['NOT_YET', 'NOT_APPLICABLE'
 export type OnboardingStatus = (typeof onboardingStatusEnum.enumValues)[number];
 export type SkipReason = (typeof skipReasonEnum.enumValues)[number];
 
+/** Result of one check-in / check-out attempt. Only OK attempts change attendance; the rest are kept as an audit trail. */
+export const punchOutcomeEnum = pgEnum('punch_outcome', ['OK', 'OUTSIDE_GEOFENCE', 'NO_LOCATION', 'POOR_ACCURACY']);
+export const punchKindEnum = pgEnum('punch_kind', ['IN', 'OUT']);
+export type PunchOutcome = (typeof punchOutcomeEnum.enumValues)[number];
+
 export type CompanyStatus = (typeof companyStatusEnum.enumValues)[number];
 export type Plan = (typeof planEnum.enumValues)[number];
 export type BranchType = (typeof branchTypeEnum.enumValues)[number];
@@ -219,4 +224,28 @@ export const employeeKyc = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [index('kyc_company_status_idx').on(t.companyId, t.status)],
+);
+
+/**
+ * Raw check-in attempts. Lives in Postgres for now; the spec moves it to MongoDB
+ * (punch_events) behind the outbox once that client exists. Payroll never reads
+ * this table, only the attendance_record rolled up from OK punches.
+ */
+export const punchEvent = pgTable(
+  'punch_event',
+  {
+    id: text('id').primaryKey().$defaultFn(newId),
+    companyId: text('company_id').notNull().references(() => company.id, { onDelete: 'cascade' }),
+    employeeId: text('employee_id').notNull().references(() => employee.id, { onDelete: 'cascade' }),
+    branchId: text('branch_id').references(() => branch.id, { onDelete: 'set null' }),
+    ts: ts('ts').notNull().defaultNow(),
+    kind: punchKindEnum('kind').notNull(),
+    outcome: punchOutcomeEnum('outcome').notNull(),
+    latitude: doublePrecision('latitude'),
+    longitude: doublePrecision('longitude'),
+    accuracyM: doublePrecision('accuracy_m'),
+    /** Distance from the branch geofence centre, when both are known. */
+    distanceM: doublePrecision('distance_m'),
+  },
+  (t) => [index('punch_company_ts_idx').on(t.companyId, t.ts), index('punch_employee_ts_idx').on(t.employeeId, t.ts)],
 );

@@ -14,10 +14,13 @@ export function CheckInWidget({
   action,
   label,
   allowLocation,
+  requireLocation = false,
 }: {
   action: Action;
   label: string;
   allowLocation: boolean;
+  /** The branch has a geofence: location is sent with every attempt, no checkbox. */
+  requireLocation?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(action, null);
   const [share, setShare] = useState(false);
@@ -27,7 +30,7 @@ export function CheckInWidget({
   function submit() {
     const form = formRef.current;
     if (!form) return;
-    if (!share || !navigator.geolocation) {
+    if ((!share && !requireLocation) || !navigator.geolocation) {
       form.requestSubmit();
       return;
     }
@@ -35,13 +38,14 @@ export function CheckInWidget({
       (pos) => {
         (form.elements.namedItem('lat') as HTMLInputElement).value = String(pos.coords.latitude);
         (form.elements.namedItem('lng') as HTMLInputElement).value = String(pos.coords.longitude);
+        (form.elements.namedItem('acc') as HTMLInputElement).value = String(pos.coords.accuracy);
         form.requestSubmit();
       },
       () => {
-        setGeoError('Could not read your location — checking in without it.');
-        form.requestSubmit();
+        setGeoError(requireLocation ? 'Could not read your location. Allow location access and try again.' : 'Could not read your location — checking in without it.');
+        if (!requireLocation) form.requestSubmit();
       },
-      { enableHighAccuracy: false, timeout: 8000 },
+      { enableHighAccuracy: requireLocation, timeout: 10000, maximumAge: 0 },
     );
   }
 
@@ -49,7 +53,9 @@ export function CheckInWidget({
     <form ref={formRef} action={formAction} className="space-y-3">
       <input type="hidden" name="lat" />
       <input type="hidden" name="lng" />
-      {allowLocation && (
+      <input type="hidden" name="acc" />
+      {requireLocation && <p className="text-xs text-gray-500">Your branch checks your location at check-in.</p>}
+      {allowLocation && !requireLocation && (
         <label className="flex items-center gap-2 text-sm text-gray-700">
           <input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} />
           Share my location with this check-in

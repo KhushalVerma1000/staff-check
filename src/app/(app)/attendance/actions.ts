@@ -3,10 +3,11 @@
 import { revalidatePath } from 'next/cache';
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
-import { db, attendanceRecord, company, employee } from '@/db';
+import { db, attendanceRecord, branch, company, employee, punchEvent } from '@/db';
 import { done, fail, type ActionResult } from '@/lib/action-result';
 import { audit } from '@/lib/audit';
 import { assertCan } from '@/lib/auth/can';
+import { evaluatePunch, refusalMessage } from '@/lib/attendance/punch';
 import { parseDay } from '@/lib/attendance/summary';
 import { text } from '@/lib/form';
 import { getActor } from '@/lib/session';
@@ -76,6 +77,7 @@ export async function markAttendanceAction(_p: ActionResult | null, fd: FormData
 const geoSchema = z.object({
   lat: z.coerce.number().min(-90).max(90).optional(),
   lng: z.coerce.number().min(-180).max(180).optional(),
+  acc: z.coerce.number().min(0).max(100000).optional(),
 });
 
 /** Self check-in / check-out for the signed-in person's own staff record. */
@@ -86,22 +88,57 @@ export async function selfCheckAction(_p: ActionResult | null, fd: FormData): Pr
   if (!actor.employeeId) return fail('Your login is not linked to a staff record. Ask your admin to link it.');
 
   const [emp] = await db
-    .select({ id: employee.id })
+    .select({
+      id: employee.id,
+      branchId: employee.branchId,
+      branchName: branch.name,
+      lat: branch.latitude,
+      lng: branch.longitude,
+      radiusM: branch.radiusM,
+    })
     .from(employee)
+    .leftJoin(branch, eq(branch.id, employee.branchId))
     .where(and(eq(employee.id, actor.employeeId), eq(employee.companyId, companyId), eq(employee.status, 'ACTIVE')))
     .limit(1);
   if (!emp) return fail('Your staff record is not active.');
 
-  const geo = geoSchema.safeParse({ lat: text(fd, 'lat') || undefined, lng: text(fd, 'lng') || undefined });
+  const geo = geoSchema.safeParse({
+    lat: text(fd, 'lat') || undefined,
+    lng: text(fd, 'lng') || undefined,
+    acc: text(fd, 'acc') || undefined,
+  });
   const hasGeo = geo.success && geo.data.lat !== undefined && geo.data.lng !== undefined;
+  const position = hasGeo ? { lat: geo.data!.lat!, lng: geo.data!.lng! } : null;
+
+  const fence = emp.lat !== null && emp.lng !== null && emp.radiusM !== null ? { lat: emp.lat, lng: emp.lng, radiusM: emp.radiusM } : null;
+  const decision = evaluatePunch({ fence, position, accuracyM: geo.success ? geo.data.acc : undefined });
 
   const day = parseDay(todayKey(await companyTz(companyId)))!;
   const now = new Date();
+  const record = (kind: 'IN' | 'OUT') =>
+    db.insert(punchEvent).values({
+      companyId,
+      employeeId: emp.id,
+      branchId: emp.branchId,
+      ts: now,
+      kind,
+      outcome: decision.outcome,
+      latitude: position?.lat ?? null,
+      longitude: position?.lng ?? null,
+      accuracyM: geo.success ? (geo.data.acc ?? null) : null,
+      distanceM: decision.distanceM,
+    });
   const [existing] = await db
     .select()
     .from(attendanceRecord)
     .where(and(eq(attendanceRecord.employeeId, emp.id), eq(attendanceRecord.date, day)))
     .limit(1);
+
+  const kind = !existing || !existing.checkIn ? 'IN' : 'OUT';
+  if (decision.outcome !== 'OK' && (!existing || !existing.checkOut)) {
+    await record(kind); // refused attempts are kept, they change no attendance
+    return fail(refusalMessage(decision, fence, emp.branchName ?? 'your branch'));
+  }
 
   if (!existing || !existing.checkIn) {
     const where = {
@@ -115,12 +152,14 @@ export async function selfCheckAction(_p: ActionResult | null, fd: FormData): Pr
       .insert(attendanceRecord)
       .values({ companyId, employeeId: emp.id, date: day, ...where })
       .onConflictDoUpdate({ target: [attendanceRecord.employeeId, attendanceRecord.date], set: where });
+    await record('IN');
     revalidatePath('/dashboard');
     revalidatePath('/attendance');
     return done('Checked in.');
   }
   if (!existing.checkOut) {
     await db.update(attendanceRecord).set({ checkOut: now }).where(eq(attendanceRecord.id, existing.id));
+    await record('OUT');
     revalidatePath('/dashboard');
     return done('Checked out. Have a good evening.');
   }

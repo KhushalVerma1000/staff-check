@@ -75,3 +75,14 @@ test('branch geofence columns round-trip and are optional', async () => {
   assert.equal(plain.radiusM, null);
   assert.deepEqual([fenced.latitude, fenced.longitude, fenced.radiusM], [18.52, 73.85, 150]);
 });
+
+test('punch events record refused attempts without touching attendance', async () => {
+  const db = await fresh();
+  const [a] = await db.insert(s.company).values({ name: 'A', slug: 'a' }).returning();
+  const [e] = await db.insert(s.employee).values({ companyId: a.id, code: 'E-1', name: 'x', joinedOn: new Date('2026-01-01') }).returning();
+  await db.insert(s.punchEvent).values({ companyId: a.id, employeeId: e.id, kind: 'IN', outcome: 'OUTSIDE_GEOFENCE', distanceM: 420 });
+  const punches = await db.select().from(s.punchEvent);
+  assert.equal(punches.length, 1);
+  assert.equal(punches[0].outcome, 'OUTSIDE_GEOFENCE');
+  assert.equal((await db.select().from(s.attendanceRecord)).length, 0);
+});

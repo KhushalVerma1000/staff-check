@@ -11,7 +11,7 @@
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
-    "test": "tsx --test src/lib/auth/can.test.ts src/lib/tenant/scope.test.ts src/lib/attendance/summary.test.ts src/lib/leave/days.test.ts src/lib/tenant/time.test.ts src/lib/csv.test.ts src/lib/slug.test.ts src/lib/data/data.test.ts src/db/db.test.ts src/lib/geo.test.ts src/lib/kyc/validate.test.ts src/lib/mail/mail.test.ts",
+    "test": "tsx --test src/lib/auth/can.test.ts src/lib/tenant/scope.test.ts src/lib/attendance/summary.test.ts src/lib/leave/days.test.ts src/lib/tenant/time.test.ts src/lib/csv.test.ts src/lib/slug.test.ts src/lib/data/data.test.ts src/db/db.test.ts src/lib/geo.test.ts src/lib/kyc/validate.test.ts src/lib/attendance/punch.test.ts src/lib/mail/mail.test.ts",
     "db:seed": "tsx src/db/seed.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts"

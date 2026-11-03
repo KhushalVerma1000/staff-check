@@ -22,6 +22,13 @@
       "when": 1793622635373,
       "tag": "0002_employee_kyc",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793704456714,
+      "tag": "0003_punch_event",
+      "breakpoints": true
     }
   ]
 }

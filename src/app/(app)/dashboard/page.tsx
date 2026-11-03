@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { and, count as sqlCount, eq, ne } from 'drizzle-orm';
-import { db, attendanceRecord, company as companyTable, employee, leaveRequest } from '@/db';
+import { db, attendanceRecord, branch, company as companyTable, employee, leaveRequest } from '@/db';
 import { CheckInWidget } from '@/components/check-in-widget';
 import { PageHeader } from '@/components/shell/app-shell';
 import { Button } from '@/components/ui/button';
@@ -72,8 +72,9 @@ export default async function DashboardPage() {
       : Promise.resolve(null),
     actor.employeeId
       ? db
-          .select({ workType: employee.workType })
+          .select({ workType: employee.workType, radiusM: branch.radiusM })
           .from(employee)
+          .leftJoin(branch, eq(branch.id, employee.branchId))
           .where(and(eq(employee.id, actor.employeeId), eq(employee.companyId, actor.companyId)))
           .limit(1)
           .then((r) => r[0] ?? null)
@@ -87,6 +88,7 @@ export default async function DashboardPage() {
       : hc.active;
   const marked = todayRows.reduce((n, r) => n + r._count._all, 0);
 
+  const fenced = me?.radiusM != null;
   const checkLabel = !mine?.checkIn ? 'Check in' : !mine.checkOut ? 'Check out' : null;
 
   return (
@@ -114,7 +116,7 @@ export default async function DashboardPage() {
                 In {fmtTime(mine?.checkIn, tz)} · Out {fmtTime(mine?.checkOut, tz)}
               </p>
               {checkLabel ? (
-                <CheckInWidget action={selfCheckAction} label={checkLabel} allowLocation={me?.workType !== 'OFFICE'} />
+                <CheckInWidget action={selfCheckAction} label={checkLabel} allowLocation={me?.workType !== 'OFFICE'} requireLocation={fenced} />
               ) : (
                 <p className="text-sm text-green-800">You are done for today.</p>
               )}
