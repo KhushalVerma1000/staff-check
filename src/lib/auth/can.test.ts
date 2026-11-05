@@ -79,3 +79,21 @@ test('onboarding: every company role fills its own; only admin and HR review', (
   assert.equal(can(actor('SUPER_ADMIN', null, null), 'onboarding:self'), false);
   assert.equal(can(actor('HR'), 'onboarding:review', { companyId: 'other' }), false);
 });
+
+test('only admin and HR manage the leave policy', () => {
+  const mk = (role: 'ADMIN' | 'HR' | 'MANAGER' | 'ACCOUNTANT') => ({ id: 'u', role, companyId: 'c', employeeId: null });
+  assert.equal(can(mk('ADMIN'), 'leavePolicy:manage'), true);
+  assert.equal(can(mk('HR'), 'leavePolicy:manage'), true);
+  assert.equal(can(mk('MANAGER'), 'leavePolicy:manage'), false);
+  assert.equal(can(mk('ACCOUNTANT'), 'leavePolicy:manage'), false);
+});
+
+test('payroll: admin and accountant run it, HR can only view, managers never see it', () => {
+  const mk = (role: 'ADMIN' | 'HR' | 'MANAGER' | 'ACCOUNTANT') => ({ id: 'u', role, companyId: 'c', employeeId: null });
+  for (const [role, view, manage] of [['ADMIN', true, true], ['ACCOUNTANT', true, true], ['HR', true, false], ['MANAGER', false, false]] as const) {
+    assert.equal(can(mk(role), 'payroll:view'), view, `${role} view`);
+    assert.equal(can(mk(role), 'payroll:manage'), manage, `${role} manage`);
+  }
+  assert.equal(can({ id: 's', role: 'SUPER_ADMIN', companyId: null, employeeId: null }, 'payroll:view'), false);
+  assert.equal(can(mk('ADMIN'), 'payroll:manage', { companyId: 'other' }), false);
+});

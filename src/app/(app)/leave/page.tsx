@@ -9,6 +9,8 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
 import { can } from '@/lib/auth/can';
 import { fmtDate, LEAVE_TYPE_LABEL } from '@/lib/labels';
+import { LEAVE_TYPES } from '@/lib/leave/balance';
+import { employeeBalances } from '@/lib/leave/queries';
 import { db, employee, leaveRequest } from '@/db';
 import { requireCompanyActor } from '@/lib/session';
 import { employeeFilter } from '@/lib/tenant/sql';
@@ -21,6 +23,9 @@ const STATUS_VARIANT = { PENDING: 'outline', APPROVED: 'default', REJECTED: 'des
 export default async function LeavePage() {
   const actor = await requireCompanyActor('leave:view');
   const canDecide = can(actor, 'leave:decide', { companyId: actor.companyId });
+
+  const year = new Date().getUTCFullYear();
+  const balances = actor.employeeId ? await employeeBalances(actor.companyId, actor.employeeId, year) : null;
 
   const [pending, mine] = await Promise.all([
     canDecide
@@ -92,6 +97,26 @@ export default async function LeavePage() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {balances && (
+        <section aria-label={`Leave balance for ${year}`} className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {LEAVE_TYPES.map((t) => {
+            const b = balances[t];
+            return (
+              <Card key={t}>
+                <CardContent className="p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-gray-500">{LEAVE_TYPE_LABEL[t]}</p>
+                  <p className="mt-1 text-2xl font-semibold text-gray-900">{b.remaining === null ? 'No limit' : `${b.remaining} left`}</p>
+                  <p className="text-xs text-gray-500">
+                    {b.used} used{b.pending ? ` · ${b.pending} pending` : ''}
+                    {b.allowance !== null ? ` · of ${b.allowance} in ${year}` : ` in ${year}`}
+                  </p>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </section>
       )}
 
       {actor.employeeId ? (

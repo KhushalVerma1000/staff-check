@@ -9,7 +9,14 @@ import { audit } from '@/lib/audit';
 import { assertCan, can } from '@/lib/auth/can';
 import { parseDay, toDayKey } from '@/lib/attendance/summary';
 import { firstIssue, optional, text } from '@/lib/form';
+import { env } from '@/lib/env';
+import { fits } from '@/lib/leave/balance';
 import { leaveDays } from '@/lib/leave/days';
+import { employeeBalances } from '@/lib/leave/queries';
+import { templateFor } from '@/lib/mail/store';
+import { leaveDecidedEmail, leaveRequestedEmail } from '@/lib/mail/templates';
+import { approverUserIds, notify, userIdOfEmployee } from '@/lib/notify';
+import { fmtDate, LEAVE_TYPE_LABEL } from '@/lib/labels';
 import { getActor } from '@/lib/session';
 import { canSeeEmployee, companyIdOf } from '@/lib/tenant/scope';
 import { todayKey } from '@/lib/tenant/time';
@@ -65,6 +72,14 @@ export async function requestLeaveAction(_p: ActionResult | null, fd: FormData):
     .limit(1);
   if (overlapping) return fail('You already have leave requested for some of those days.');
 
+  const balances = await employeeBalances(companyId, actor.employeeId, from.getUTCFullYear());
+  const bal = balances[parsed.data.type];
+  if (!fits(bal, days)) {
+    return fail(
+      `You have ${bal.remaining} ${bal.remaining === 1 ? 'day' : 'days'} of ${LEAVE_TYPE_LABEL[parsed.data.type].toLowerCase()} leave left for ${from.getUTCFullYear()}, and this request needs ${days}. Choose another type or ask HR.`,
+    );
+  }
+
   const [req] = await db
     .insert(leaveRequest)
     .values({
@@ -85,9 +100,39 @@ export async function requestLeaveAction(_p: ActionResult | null, fd: FormData):
     entityId: req.id,
     detail: `${parsed.data.from} → ${parsed.data.to} (${days}d)`,
   });
+  const [me] = await db.select({ name: employee.name, managerId: employee.managerId }).from(employee).where(eq(employee.id, actor.employeeId)).limit(1);
+  const approvers = await approverUserIds(companyId, { employeeId: actor.employeeId, managerId: me?.managerId ?? null, userId: actor.id });
+  const typeLabel = LEAVE_TYPE_LABEL[parsed.data.type];
+  const requestedTpl = await templateFor(companyId, 'leave.requested');
+  await notify({
+    companyId,
+    userIds: approvers,
+    kind: 'leave.requested',
+    title: `${me?.name ?? 'A colleague'} asked for ${typeLabel.toLowerCase()} leave`,
+    body: `${fmtDate(from)}${from.getTime() === to.getTime() ? '' : ` – ${fmtDate(to)}`} · ${days} ${days === 1 ? 'day' : 'days'}`,
+    href: '/leave',
+    email: (r) =>
+      leaveRequestedEmail(
+        {
+          to: r.email,
+          name: r.name,
+          employeeName: me?.name ?? 'A colleague',
+          type: typeLabel,
+          from: fmtDate(from),
+          until: fmtDate(to),
+          days,
+          reason: parsed.data.reason,
+          appUrl: env().BETTER_AUTH_URL,
+        },
+        requestedTpl,
+      ),
+  });
   revalidatePath('/leave');
   revalidatePath('/dashboard');
-  return done('Leave requested. Your manager has been asked to review it.');
+  revalidatePath('/notifications');
+  return done(
+    approvers.length > 0 ? 'Leave requested. Your approver has been told.' : 'Leave requested. It is waiting in the review queue.',
+  );
 }
 
 export async function cancelLeaveAction(formData: FormData): Promise<void> {
@@ -185,6 +230,27 @@ export async function decideLeaveAction(formData: FormData): Promise<void> {
     entity: 'LeaveRequest',
     entityId: id,
   });
+  const requesterLogin = await userIdOfEmployee(companyId, req.employeeId);
+  if (requesterLogin) {
+    const approved = decision === 'APPROVED';
+    const note = optional(formData, 'note') ?? null;
+    const typeLabel = LEAVE_TYPE_LABEL[req.type];
+    const decidedTpl = await templateFor(companyId, 'leave.decided');
+    await notify({
+      companyId,
+      userIds: [requesterLogin],
+      kind: 'leave.decided',
+      title: `Your ${typeLabel.toLowerCase()} leave was ${approved ? 'approved' : 'not approved'}`,
+      body: `${fmtDate(req.fromDate)}${req.fromDate.getTime() === req.toDate.getTime() ? '' : ` – ${fmtDate(req.toDate)}`}${note ? ` · “${note}”` : ''}`,
+      href: '/leave',
+      email: (r) =>
+        leaveDecidedEmail(
+          { to: r.email, name: r.name, approved, type: typeLabel, from: fmtDate(req.fromDate), until: fmtDate(req.toDate), note, appUrl: env().BETTER_AUTH_URL },
+          decidedTpl,
+        ),
+    });
+  }
+  revalidatePath('/notifications');
   revalidatePath('/leave');
   revalidatePath('/attendance');
   revalidatePath('/dashboard');

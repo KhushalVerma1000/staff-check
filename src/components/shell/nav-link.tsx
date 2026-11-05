@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
-export function NavLink({ href, label, exact = false }: { href: string; label: string; exact?: boolean }) {
+export function NavLink({ href, label, exact = false, badge }: { href: string; label: string; exact?: boolean; badge?: number }) {
   const pathname = usePathname();
   const active = exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
   return (
@@ -17,6 +17,11 @@ export function NavLink({ href, label, exact = false }: { href: string; label: s
       )}
     >
       {label}
+      {badge ? (
+        <span className="ml-2 rounded-full bg-blue-600 px-1.5 py-0.5 text-xs font-semibold text-white" aria-label={`${badge} unread`}>
+          {badge > 99 ? '99+' : badge}
+        </span>
+      ) : null}
     </Link>
   );
 }

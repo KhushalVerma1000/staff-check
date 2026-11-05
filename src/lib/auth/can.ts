@@ -24,6 +24,9 @@ export type Action =
   | 'leave:request'
   | 'leave:view'
   | 'leave:decide'
+  | 'leavePolicy:manage'
+  | 'payroll:view'
+  | 'payroll:manage'
   | 'reports:view'
   | 'user:manage'
   | 'auditLog:view'
@@ -45,6 +48,9 @@ const ALL_COMPANY_ACTIONS: readonly Action[] = [
   'leave:request',
   'leave:view',
   'leave:decide',
+  'leavePolicy:manage',
+  'payroll:view',
+  'payroll:manage',
   'reports:view',
   'user:manage',
   'auditLog:view',
@@ -74,11 +80,23 @@ const MATRIX: Record<Role, readonly Action[]> = {
     'leave:request',
     'leave:view',
     'leave:decide',
+    'leavePolicy:manage',
+    'payroll:view',
     'reports:view',
     'onboarding:self',
     'onboarding:review',
   ],
-  ACCOUNTANT: ['employee:view', 'attendance:view', 'attendance:selfCheckIn', 'leave:request', 'leave:view', 'reports:view', 'onboarding:self'],
+  ACCOUNTANT: [
+    'employee:view',
+    'attendance:view',
+    'attendance:selfCheckIn',
+    'leave:request',
+    'leave:view',
+    'payroll:view',
+    'payroll:manage',
+    'reports:view',
+    'onboarding:self',
+  ],
   MANAGER: [
     'employee:view',
     'attendance:view',

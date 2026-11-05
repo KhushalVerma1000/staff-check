@@ -36,6 +36,41 @@
       "when": 1793704733334,
       "tag": "0004_attendance_correction",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793753655213,
+      "tag": "0005_leave_policy_notification",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793755239503,
+      "tag": "0006_notification_pref",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793756310769,
+      "tag": "0007_email_template",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793799992822,
+      "tag": "0008_payroll",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793799993735,
+      "tag": "0009_payroll_immutable",
+      "breakpoints": true
     }
   ]
 }

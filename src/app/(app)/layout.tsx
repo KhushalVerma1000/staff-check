@@ -1,5 +1,5 @@
-import { eq } from 'drizzle-orm';
-import { db, company } from '@/db';
+import { and, count, eq, isNull } from 'drizzle-orm';
+import { db, company, notification } from '@/db';
 import { AppShell, type NavItem } from '@/components/shell/app-shell';
 import { can } from '@/lib/auth/can';
 import { ROLE_LABEL } from '@/lib/labels';
@@ -9,11 +9,23 @@ export default async function CompanyLayout({ children }: { children: React.Reac
   const actor = await requireCompanyActor();
   const [co] = await db.select({ name: company.name, status: company.status }).from(company).where(eq(company.id, actor.companyId)).limit(1);
 
+  const [{ unread }] = await db
+    .select({ unread: count() })
+    .from(notification)
+    .where(and(eq(notification.userId, actor.id), eq(notification.companyId, actor.companyId), isNull(notification.readAt)));
+
   const nav: NavItem[] = [{ href: '/dashboard', label: 'Dashboard', exact: true }];
   if (can(actor, 'employee:view')) nav.push({ href: '/employees', label: actor.role === 'MANAGER' ? 'My team' : 'Employees' });
   if (can(actor, 'attendance:view')) nav.push({ href: '/attendance', label: 'Attendance' });
   if (can(actor, 'attendance:selfCheckIn') && actor.employeeId) nav.push({ href: '/attendance/corrections', label: 'Corrections' });
-  if (can(actor, 'leave:view')) nav.push({ href: '/leave', label: 'Leave' });
+  if (can(actor, 'leave:view')) nav.push({ href: '/leave', label: 'Leave', exact: true });
+  if (can(actor, 'leavePolicy:manage')) {
+    nav.push({ href: '/leave/policy', label: 'Leave policy' });
+    nav.push({ href: '/leave/emails', label: 'Leave emails' });
+  }
+  if (can(actor, 'payroll:view')) nav.push({ href: '/payroll', label: 'Payroll', exact: true });
+  if (actor.employeeId) nav.push({ href: '/payslips', label: 'My payslips' });
+  nav.push({ href: '/notifications', label: 'Notifications', badge: unread });
   if (can(actor, 'branch:manage')) nav.push({ href: '/branches', label: 'Branches' });
   if (can(actor, 'department:manage')) nav.push({ href: '/departments', label: 'Departments' });
   if (can(actor, 'reports:view')) nav.push({ href: '/reports', label: 'Reports' });

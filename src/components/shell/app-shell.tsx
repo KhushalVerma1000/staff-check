@@ -8,6 +8,8 @@ export interface NavItem {
   href: string;
   label: string;
   exact?: boolean;
+  /** Small count shown beside the label (e.g. unread notifications). Hidden when 0. */
+  badge?: number;
 }
 
 /** Sidebar on desktop, scrolling tab row on phones. */
